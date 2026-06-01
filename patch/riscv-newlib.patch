@@ -1,0 +1,95 @@
+From 2e4a4d967cf9288e6998f2ac76d86022e74088da Mon Sep 17 00:00:00 2001
+From: Evgeny Linsky <evgeny.linsky@cloudbear.ru>
+Date: Fri, 14 Dec 2018 18:08:26 +0300
+Subject: Add CFLAGS for reentrancy support.
+
+Issue: CB-1082
+Change-Id: I149a1d8ac797a9a0c8d77b0cafc734f3f3a7144e
+---
+ newlib/configure.host | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/newlib/configure.host b/newlib/configure.host
+index 386183466..4073a008a 100644
+--- a/newlib/configure.host
++++ b/newlib/configure.host
+@@ -827,6 +827,7 @@ newlib_cflags="${newlib_cflags} -DCLOCK_PROVIDED -DMALLOC_PROVIDED -DEXIT_PROVID
+ 	newlib_cflags="${newlib_cflags} -DSMALL_MEMORY -D_REENT_SMALL"
+ 	;;
+   riscv*-*-*)
++	newlib_cflags="${newlib_cflags} -D__DYNAMIC_REENT__"
+ 	syscall_dir=syscalls
+ 	;;
+   sh*-*-*)
+-- 
+2.39.3
+
+
+From 68ccebc904c1124db265ba1ec1f8d4f324801505 Mon Sep 17 00:00:00 2001
+From: Denis Ivanov <denis.ivanov@cloudbear.ru>
+Date: Wed, 3 Jun 2020 13:13:02 +0300
+Subject: Optimize strcmp/strcpy/stlen when bitmanip extension is enabled.
+
+Issue: CB-1297
+Change-Id: I5ca52167af806108ac9daca4ed101148cbc2fc2c
+---
+ newlib/libc/machine/riscv/strcmp.S     | 7 +++++++
+ newlib/libc/machine/riscv/sys/string.h | 6 ++++++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/newlib/libc/machine/riscv/strcmp.S b/newlib/libc/machine/riscv/strcmp.S
+index 9af9ca1f3..450ad4d69 100644
+--- a/newlib/libc/machine/riscv/strcmp.S
++++ b/newlib/libc/machine/riscv/strcmp.S
+@@ -35,20 +35,27 @@ strcmp:
+   and   a4, a4, SZREG-1
+   bnez  a4, .Lmisaligned
+ 
++#ifndef __riscv_zbb
+ #if SZREG == 4
+   li a5, 0x7f7f7f7f
+ #else
+   ld a5, mask
++#endif
+ #endif
+ 
+   .macro check_one_word i n
+     REG_L a2, \i*SZREG(a0)
+     REG_L a3, \i*SZREG(a1)
+ 
++#ifdef __riscv_zbb
++    // For more details see "4.1.12 Finding bytes of certain values" of bitmanip specification.
++    orc.b t0, a2
++#else
+     and   t0, a2, a5
+     or    t1, a2, a5
+     add   t0, t0, a5
+     or    t0, t0, t1
++#endif
+ 
+     bne   t0, t2, .Lnull\i
+     .if \i+1-\n
+diff --git a/newlib/libc/machine/riscv/sys/string.h b/newlib/libc/machine/riscv/sys/string.h
+index beebe31f7..e4172aacb 100644
+--- a/newlib/libc/machine/riscv/sys/string.h
++++ b/newlib/libc/machine/riscv/sys/string.h
+@@ -14,10 +14,16 @@
+ 
+ static __inline unsigned long __libc_detect_null(unsigned long w)
+ {
++#ifdef __riscv_zbb
++  // For more details see "4.1.12 Finding bytes of certain values" of bitmanip specification.
++  __asm__("orc.b %0, %0" : "+r"(w));
++  return ~w != 0;
++#else
+   unsigned long mask = 0x7f7f7f7f;
+   if (sizeof (long) == 8)
+     mask = ((mask << 16) << 16) | mask;
+   return ~(((w & mask) + mask) | w | mask);
++#endif
+ }
+ 
+ #endif
+-- 
+2.39.3
+
