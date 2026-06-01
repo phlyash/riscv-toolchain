@@ -1,0 +1,123 @@
+name: NIIET baremetal toolchain
+
+# Builds the rv32imafdc_zicsr_zifencei baremetal toolchain (GCC + clang/lld from
+# Syntacore's snippy LLVM, reduced rv32 multilib, newlib + newlib-nano) for:
+#   - Linux x86_64   (AlmaLinux 8 / glibc 2.28 -> portable)   [VALIDATED recipe]
+#   - macOS arm64    (native)                                  [experimental: needs CI shakeout]
+#   - Windows x86_64 (mingw canadian-cross, GNU only)          [experimental: clang TODO]
+#
+# Manual trigger (and on version tags). See build/BUILD-NOTES.md.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-24.04
+    container:
+      image: almalinux:8
+    steps:
+      - name: git for checkout
+        run: dnf -y install git
+      - uses: actions/checkout@v6
+      - name: install build deps
+        run: bash build/setup-almalinux8.sh
+      - name: cache patched sources
+        id: src
+        uses: actions/cache@v5
+        with:
+          path: /sources
+          key: niiet-src-linux-${{ hashFiles('patch/riscv-*.patch') }}-v1
+      - name: prepare sources
+        if: steps.src.outputs.cache-hit != 'true'
+        run: SOURCES=/sources bash build/prepare-sources.sh
+      - name: build (gcc + clang + package)
+        run: |
+          source /opt/rh/gcc-toolset-12/enable
+          SRC="$GITHUB_WORKSPACE" SOURCES=/sources WORK=/work \
+          PREFIX=/opt/riscv OUT="$GITHUB_WORKSPACE/out" \
+            bash build/build-baremetal.sh all
+      - uses: actions/upload-artifact@v7
+        with:
+          name: riscv32-imafdc-elf-x86_64-linux-gcc-clang
+          path: out/*.tar.xz
+          compression-level: 0
+
+  macos-arm64:
+    runs-on: macos-14
+    continue-on-error: true        # experimental until shaken out on the runner
+    steps:
+      - uses: actions/checkout@v6
+      - name: install build deps
+        run: |
+          brew install bison gawk gnu-sed make gmp mpfr libmpc isl expat \
+                       ninja cmake autoconf automake libtool texinfo python@3.11
+      - name: cache patched sources
+        id: src
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/sources
+          key: niiet-src-macos-${{ hashFiles('patch/riscv-*.patch') }}-v1
+      - name: prepare sources
+        if: steps.src.outputs.cache-hit != 'true'
+        run: SOURCES="$GITHUB_WORKSPACE/sources" bash build/prepare-sources.sh
+      - name: build (gcc + clang + package)
+        # NOTE: macOS source trees may need a case-sensitive volume (see macos-build.md).
+        # GNU bison/sed/make/gawk must precede system ones on PATH.
+        run: |
+          B=/opt/homebrew/opt
+          export PATH="$B/bison/bin:$B/gnu-sed/libexec/gnubin:$B/gawk/libexec/gnubin:$B/make/libexec/gnubin:$PATH"
+          SRC="$GITHUB_WORKSPACE" SOURCES="$GITHUB_WORKSPACE/sources" \
+          WORK="$GITHUB_WORKSPACE/work" PREFIX="$GITHUB_WORKSPACE/install/riscv" \
+          OUT="$GITHUB_WORKSPACE/out" \
+            bash build/build-baremetal.sh all
+      - uses: actions/upload-artifact@v7
+        with:
+          name: riscv32-imafdc-elf-arm64-macos-gcc-clang
+          path: out/*.tar.xz
+          compression-level: 0
+
+  windows-x86_64:
+    # Canadian cross from the Linux container: GNU toolchain (gcc/binutils/newlib)
+    # hosted on Windows. clang-for-Windows cross is not wired yet (build-baremetal.sh
+    # skips clang when WITH_HOST is set) — that's a follow-up (mingw toolchain file
+    # + native llvm-tblgen). This job currently ships GCC only.
+    runs-on: ubuntu-24.04
+    continue-on-error: true        # experimental
+    container:
+      image: almalinux:8
+    steps:
+      - name: git for checkout
+        run: dnf -y install git
+      - uses: actions/checkout@v6
+      - name: install build deps
+        run: bash build/setup-almalinux8.sh
+      - name: cache patched sources
+        id: src
+        uses: actions/cache@v5
+        with:
+          path: /sources
+          key: niiet-src-linux-${{ hashFiles('patch/riscv-*.patch') }}-v1
+      - name: prepare sources
+        if: steps.src.outputs.cache-hit != 'true'
+        run: SOURCES=/sources bash build/prepare-sources.sh
+      - name: build (gcc canadian-cross to mingw)
+        run: |
+          source /opt/rh/gcc-toolset-12/enable
+          SRC="$GITHUB_WORKSPACE" SOURCES=/sources WORK=/work \
+          PREFIX=/opt/riscv-win OUT="$GITHUB_WORKSPACE/out" \
+          WITH_HOST=x86_64-w64-mingw32 \
+            bash build/build-baremetal.sh gcc
+          SRC="$GITHUB_WORKSPACE" PREFIX=/opt/riscv-win OUT="$GITHUB_WORKSPACE/out" \
+          WITH_HOST=x86_64-w64-mingw32 \
+            bash build/build-baremetal.sh package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: riscv32-imafdc-elf-x86_64-windows-gcc
+          path: out/*.tar.xz
+          compression-level: 0
