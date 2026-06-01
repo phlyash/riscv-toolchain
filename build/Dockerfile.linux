@@ -1,0 +1,23 @@
+# Portable Linux build environment for the NIIET RISC-V baremetal toolchain.
+#
+# AlmaLinux 8 ships glibc 2.28, so host binaries produced here run on virtually
+# every still-supported Linux distro ("build old, run everywhere"). gcc-toolset-12
+# gives a modern C++17 host compiler while still linking against that old glibc.
+# Also carries MinGW-w64 for the Windows canadian-cross GNU build.
+#
+# Build (context = build/ so the setup script is available to COPY):
+#   docker build -t niiet-rv-linux -f build/Dockerfile.linux build/
+#
+# Run (from the repo root):
+#   docker run --rm \
+#     -v "$PWD":/src -v /tmp/rv-patch-verify:/sources \
+#     -v rv-work:/work -v rv-prefix:/opt/riscv -v /tmp/rv-out:/out \
+#     niiet-rv-linux bash -c '/src/build/build-baremetal.sh all'
+#
+FROM almalinux:8
+
+COPY setup-almalinux8.sh /tmp/setup-almalinux8.sh
+RUN bash /tmp/setup-almalinux8.sh && rm -f /tmp/setup-almalinux8.sh
+
+ENV BASH_ENV=/opt/rh/gcc-toolset-12/enable
+SHELL ["/bin/bash", "-c"]

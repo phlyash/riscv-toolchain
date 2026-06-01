@@ -8,3 +8,8 @@ Makefile
 /build-*/
 /install-newlib-nano/
 /stamps/
+
+# NIIET toolchain build scripts live in build/ — keep them despite the bare 'build'
+# rule above (which is meant for generated out-of-tree build dirs).
+!/build/
+!/build/**
