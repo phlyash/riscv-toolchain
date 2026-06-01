@@ -19,5 +19,10 @@ FROM almalinux:8
 COPY setup-almalinux8.sh /tmp/setup-almalinux8.sh
 RUN bash /tmp/setup-almalinux8.sh && rm -f /tmp/setup-almalinux8.sh
 
+# In CI the bind-mounted source/build dirs are owned by the host user, but the
+# container runs as root (uid mismatch) -> git refuses with "dubious ownership".
+# The build runs git inside /src and the source trees, so allow any path.
+RUN git config --system --add safe.directory '*'
+
 ENV BASH_ENV=/opt/rh/gcc-toolset-12/enable
 SHELL ["/bin/bash", "-c"]

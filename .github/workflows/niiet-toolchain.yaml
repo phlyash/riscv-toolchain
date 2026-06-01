@@ -81,6 +81,10 @@ jobs:
         run: |
           B=/opt/homebrew/opt
           export PATH="$B/flock/bin:$B/bison/bin:$B/gnu-sed/libexec/gnubin:$B/gawk/libexec/gnubin:$B/make/libexec/gnubin:$PATH"
+          # Homebrew installs gmp/mpfr/mpc/isl under /opt/homebrew/opt; configure
+          # (gdb/gcc) doesn't search there by default.
+          export LDFLAGS="-L$B/gmp/lib -L$B/mpfr/lib -L$B/libmpc/lib -L$B/isl/lib"
+          export CPPFLAGS="-I$B/gmp/include -I$B/mpfr/include -I$B/libmpc/include -I$B/isl/include"
           SRC="$GITHUB_WORKSPACE" SOURCES="$GITHUB_WORKSPACE/sources" \
           WORK="$GITHUB_WORKSPACE/work" PREFIX="$GITHUB_WORKSPACE/install/riscv" \
           OUT="$GITHUB_WORKSPACE/out" \
