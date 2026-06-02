@@ -19,7 +19,10 @@
 #     -v rv-work:/work -v rv-prefix:/opt/riscv -v /tmp/rv-out:/out \
 #     niiet-rv-linux bash -c '/src/build/build-baremetal.sh all'
 #
-FROM quay.io/pypa/manylinux2014_x86_64
+# Base is parameterized so the same Dockerfile builds the x86_64 and the aarch64
+# manylinux2014 images (CI passes --build-arg BASE=...manylinux2014_aarch64 for arm64).
+ARG BASE=quay.io/pypa/manylinux2014_x86_64
+FROM ${BASE}
 
 COPY setup-manylinux2014.sh /tmp/setup-manylinux2014.sh
 RUN bash /tmp/setup-manylinux2014.sh && rm -f /tmp/setup-manylinux2014.sh
