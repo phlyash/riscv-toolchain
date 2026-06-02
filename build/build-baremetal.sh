@@ -47,6 +47,15 @@ HOSTARCH="$(uname -m)"
 log(){ echo "" ; echo "=== [$(date +%H:%M:%S)] $* ===" ; }
 
 stage_gcc(){
+  # For a canadian cross (Windows), gdb needs host gmp/mpfr which aren't packaged
+  # for mingw — cross-build them into the mingw sysroot and point gdb at them.
+  # gdb cross to mingw also can't use the build host's Python, so --without-python.
+  local GDB_EXTRA=""
+  if [ -n "$WITH_HOST" ]; then
+    local DEPS; DEPS="$(HOST="$WITH_HOST" WORK="$WORK" bash "$SRC/build/prepare-mingw-deps.sh" | tail -1)"
+    GDB_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --without-python"
+    log "mingw gdb deps in $DEPS; GDB_TARGET_FLAGS_EXTRA=$GDB_EXTRA"
+  fi
   log "configure (GCC + multilib newlib)${WITH_HOST:+ canadian-cross host=$WITH_HOST}"
   rm -rf "$BUILD" && mkdir -p "$BUILD" && cd "$BUILD"
   "$SRC/configure" \
@@ -56,12 +65,11 @@ stage_gcc(){
     --with-languages=c,c++ \
     --enable-strip \
     ${WITH_HOST:+--with-host="$WITH_HOST"} \
-    ${WITH_HOST:+--disable-gdb} \
     --with-gcc-src="$SOURCES/gcc" \
     --with-binutils-src="$SOURCES/binutils" \
     --with-newlib-src="$SOURCES/newlib"
   log "make newlib -j$NPROC"
-  make -j"$NPROC" newlib
+  make -j"$NPROC" newlib ${GDB_EXTRA:+GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA"}
   log "GCC pass done; sanity check"
   if [ -z "$WITH_HOST" ]; then
     "$PREFIX/bin/${TUPLE}-gcc" -v 2>&1 | tail -3 || true

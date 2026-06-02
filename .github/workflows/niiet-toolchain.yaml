@@ -96,10 +96,11 @@ jobs:
           compression-level: 0
 
   windows-x86_64:
-    # Canadian cross from the Linux container: GNU toolchain (gcc/binutils/newlib)
-    # hosted on Windows. clang-for-Windows cross is not wired yet (build-baremetal.sh
-    # skips clang when WITH_HOST is set) — follow-up: mingw toolchain file + native
-    # llvm-tblgen. Ships GCC only for now.
+    # Canadian cross from the Linux container: GNU toolchain (gcc/binutils/newlib/gdb)
+    # hosted on Windows. gdb gets host gmp/mpfr cross-built into the mingw sysroot
+    # (build/prepare-mingw-deps.sh). clang-for-Windows cross is not wired yet
+    # (build-baremetal.sh skips clang when WITH_HOST is set) — follow-up: mingw
+    # toolchain file + native llvm-tblgen.
     runs-on: ubuntu-24.04
     continue-on-error: true        # experimental
     steps:
