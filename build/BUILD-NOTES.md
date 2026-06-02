@@ -1,7 +1,9 @@
 # NIIET RISC-V baremetal toolchain — build notes
 
 Target: **baremetal (newlib)**, `rv32imafdc_zicsr_zifencei`, GCC **and** clang, as small as
-possible, for hosts **Linux x86_64 / Windows x86_64 / macOS arm64**.
+possible, for hosts **Linux x86_64/arm64 · macOS arm64/x86_64 · Windows x86_64** (5 symmetric
+artifacts, each gcc + clang/lld + gdb). Windows arm64 is dropped — no stable
+`aarch64-w64-mingw32` GCC exists to cross-build with.
 
 ## Source bases (pinned CloudBEAR commits, NOT the gcc-16 submodule)
 
@@ -53,14 +55,21 @@ Strategy (to be validated empirically, in order):
 
 ## Per-host
 
-- **Linux**: `build/Dockerfile.linux` (manylinux2014 / CentOS 7 / glibc 2.17 + devtoolset-10)
-  → runs on RHEL/CentOS 7 and newer. C++ runtime statically linked (-static-libstdc++
-  -static-libgcc in build-baremetal.sh) so no GLIBCXX/CXXABI deps either.
-- **Windows**: canadian cross on the Ubuntu runner (Linux-hosted mingw GCC 13),
-  `--with-host=x86_64-w64-mingw32` (GNU side). clang-for-Windows needs extra cmake
-  (`-DLLVM_HOST_TRIPLE`, mingw C++ rt).
-- **macOS arm64**: native on the Mac; `source macos.zsh` first (homebrew bison/gawk/gsed/
-  gmake, gmp/mpfr/mpc), build on a case-sensitive volume.
+- **Linux x86_64 + arm64**: `build/Dockerfile.linux` (manylinux2014 / CentOS 7 / glibc 2.17
+  + devtoolset-10), base parameterized via `ARG BASE` (CI passes the `_x86_64` or `_aarch64`
+  image; arm64 runs natively on an arm runner) → runs on RHEL/CentOS 7 and newer. C++ runtime
+  statically linked (-static-libstdc++ -static-libgcc in build-baremetal.sh) so no
+  GLIBCXX/CXXABI deps either.
+- **Windows x86_64**: canadian cross on the Ubuntu runner (Linux-hosted mingw GCC 13),
+  `--with-host=x86_64-w64-mingw32` for gcc+gdb, **plus a cross-built clang/lld** —
+  `stage_clang_cross` does a native `*-tblgen` pre-pass then a mingw cross configure
+  (`CMAKE_SYSTEM_NAME=Windows`, `LLVM_NATIVE_TOOL_DIR`, fully static host link
+  `-static -static-libgcc -static-libstdc++`, optional host deps ZLIB/ZSTD/LIBXML2/TERMINFO
+  OFF). All `.exe`s install into the same `$PREFIX`.
+- **macOS arm64 + x86_64**: native on the Mac runners (`macos-14` / `macos-13`); homebrew
+  bison/gawk/gsed/gmake + gmp/mpfr/mpc, prefix auto-detected via `$(brew --prefix)`
+  (`/opt/homebrew` on arm64, `/usr/local` on Intel). Source trees may need a case-sensitive
+  volume.
 
 ## Scripts (in build/)
 
@@ -82,19 +91,19 @@ docker run --rm -v "$PWD":/src -v /tmp/rv-patch-verify:/sources \
 ## CI: `.github/workflows/niiet-toolchain.yaml`
 
 Manual (`workflow_dispatch`) + version tags. Jobs:
-- **linux-x86_64** — manylinux2014 (glibc 2.17) container on an x86_64 runner. The real
-  portable x86_64 deliverable (runs on CentOS/RHEL 7+). Sources cached by patch-file hash.
-- **macos-arm64** — native on `macos-14`. Experimental (`continue-on-error`): needs a real
-  CI run to shake out (PATH for GNU tools; possible case-sensitive-FS requirement).
-- **windows-x86_64** — mingw canadian-cross on the Ubuntu runner, **GCC + gdb** (clang
-  skipped when `WITH_HOST` is set). A canadian cross needs a runnable build->target gcc to
-  compile target libgcc/libstdc++ + dump specs (the host cc1 is a Windows .exe), so
-  `stage_gcc` does a **native pre-pass** into `$WORK/native-toolchain` and puts it first on
-  PATH before the canadian pass (into `$PREFIX`). Experimental.
+- **linux** (matrix ×2: `x86_64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`) —
+  manylinux2014 (glibc 2.17) container, native per arch. x86_64 is the validated portable
+  anchor (runs on CentOS/RHEL 7+); arm64 is `continue-on-error`. Sources cached per arch.
+- **macos** (matrix ×2: `arm64` on `macos-14`, `x86_64` on `macos-13`) — native.
+  Experimental (`continue-on-error`): PATH for GNU tools; possible case-sensitive-FS need.
+- **windows-x86_64** — mingw canadian-cross on the Ubuntu runner: **gcc + gdb + clang/lld**.
+  A canadian cross needs a runnable build->target gcc to compile target libgcc/libstdc++ +
+  dump specs (the host cc1 is a Windows .exe), so `stage_gcc` does a **native pre-pass** into
+  `$WORK/native-toolchain` first on PATH before the canadian pass. clang is cross-built by
+  `stage_clang_cross` (native tblgen pre-pass + mingw cross configure). Experimental.
 
 ### Remaining work
-- clang-for-Windows cross (mingw toolchain file + native `llvm-tblgen`, `LLVM_NATIVE_TOOL_DIR`).
-- Validate/iterate macOS and Windows jobs on actual runners.
+- Validate/iterate the new arm64 Linux, Intel macOS, and Windows-clang jobs on actual runners.
 
 ## Caveat
 
