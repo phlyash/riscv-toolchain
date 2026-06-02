@@ -2,9 +2,9 @@ name: NIIET baremetal toolchain
 
 # Builds the rv32imafdc_zicsr_zifencei baremetal toolchain (GCC + clang/lld from
 # Syntacore's snippy LLVM, reduced rv32 multilib, newlib + newlib-nano) for:
-#   - Linux x86_64   (manylinux2014 / glibc 2.17 -> portable)  [VALIDATED recipe]
-#   - macOS arm64    (native)                                  [experimental]
-#   - Windows x86_64 (mingw canadian-cross, GNU only)          [experimental: clang TODO]
+#   - Linux x86_64/arm64  (manylinux2014 / glibc 2.17 -> portable)  [x86_64 VALIDATED]
+#   - macOS arm64/x86_64  (native)                                  [experimental]
+#   - Windows x86_64 (mingw canadian-cross: gcc+gdb + cross clang)  [experimental]
 #
 # Manual trigger (and on version tags). See build/BUILD-NOTES.md.
 
@@ -136,7 +136,7 @@ jobs:
             gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
             build-essential autoconf automake libtool texinfo bison flex gawk gettext \
             libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev \
-            python3 curl xz-utils file
+            cmake ninja-build python3 python3-distutils curl xz-utils file
           # gdb uses std::thread -> require the posix-threads mingw variant
           sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
           sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
@@ -151,17 +151,20 @@ jobs:
         run: |
           sudo mkdir -p /mnt/sources && sudo chown "$USER" /mnt/sources
           SOURCES=/mnt/sources bash build/prepare-sources.sh
-      - name: Build (gcc canadian-cross to mingw + gdb)
+      - name: Build (gcc + gdb canadian-cross + clang cross to mingw)
         run: |
           sudo mkdir -p /mnt/work /mnt/prefix-win /mnt/out
           sudo chown "$USER" /mnt/work /mnt/prefix-win /mnt/out
           SRC="$PWD" SOURCES=/mnt/sources WORK=/mnt/work \
           PREFIX=/mnt/prefix-win OUT=/mnt/out WITH_HOST=x86_64-w64-mingw32 \
             bash build/build-baremetal.sh gcc
+          SRC="$PWD" SOURCES=/mnt/sources WORK=/mnt/work \
+          PREFIX=/mnt/prefix-win OUT=/mnt/out WITH_HOST=x86_64-w64-mingw32 \
+            bash build/build-baremetal.sh clang
           SRC="$PWD" PREFIX=/mnt/prefix-win OUT=/mnt/out WITH_HOST=x86_64-w64-mingw32 \
             bash build/build-baremetal.sh package
       - uses: actions/upload-artifact@v7
         with:
-          name: riscv32-imafdc-elf-x86_64-windows-gcc
+          name: riscv32-imafdc-elf-x86_64-windows-gcc-clang
           path: /mnt/out/*.tar.xz
           compression-level: 0
