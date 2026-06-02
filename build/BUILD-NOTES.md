@@ -86,8 +86,11 @@ Manual (`workflow_dispatch`) + version tags. Jobs:
   portable x86_64 deliverable (runs on CentOS/RHEL 7+). Sources cached by patch-file hash.
 - **macos-arm64** — native on `macos-14`. Experimental (`continue-on-error`): needs a real
   CI run to shake out (PATH for GNU tools; possible case-sensitive-FS requirement).
-- **windows-x86_64** — mingw canadian-cross from the container, **GCC only** for now
-  (`build-baremetal.sh` skips clang when `WITH_HOST` is set). Experimental.
+- **windows-x86_64** — mingw canadian-cross on the Ubuntu runner, **GCC + gdb** (clang
+  skipped when `WITH_HOST` is set). A canadian cross needs a runnable build->target gcc to
+  compile target libgcc/libstdc++ + dump specs (the host cc1 is a Windows .exe), so
+  `stage_gcc` does a **native pre-pass** into `$WORK/native-toolchain` and puts it first on
+  PATH before the canadian pass (into `$PREFIX`). Experimental.
 
 ### Remaining work
 - clang-for-Windows cross (mingw toolchain file + native `llvm-tblgen`, `LLVM_NATIVE_TOOL_DIR`).

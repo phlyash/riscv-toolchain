@@ -46,16 +46,31 @@ HOSTARCH="$(uname -m)"
 
 log(){ echo "" ; echo "=== [$(date +%H:%M:%S)] $* ===" ; }
 
+# Extra `make` flags for gdb's configure; only set for the canadian cross.
+GDB_EXTRA=""
+
+# One full GCC + reduced-multilib + newlib(+nano) + gdb build via the repo Makefile.
+#   $1 = install prefix     $2 = canadian-cross host ("" for a normal build->target)
+gcc_build_into(){
+  local prefix="$1" host="$2"
+  log "configure (GCC + multilib newlib) -> $prefix${host:+ (canadian host=$host)}"
+  rm -rf "$BUILD" && mkdir -p "$BUILD" && cd "$BUILD"
+  "$SRC/configure" \
+    --prefix="$prefix" \
+    --with-arch="$ARCH" --with-abi="$ABI" \
+    --with-multilib-generator="$MULTILIB" \
+    --with-languages=c,c++ \
+    --enable-strip \
+    ${host:+--with-host="$host"} \
+    --with-gcc-src="$SOURCES/gcc" \
+    --with-binutils-src="$SOURCES/binutils" \
+    --with-newlib-src="$SOURCES/newlib" \
+    --with-gdb-src="$SOURCES/gdb"
+  log "make newlib -j$NPROC -> $prefix"
+  make -j"$NPROC" newlib ${GDB_EXTRA:+GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA"}
+}
+
 stage_gcc(){
-  # For a canadian cross (Windows), gdb needs host gmp/mpfr which aren't packaged
-  # for mingw — cross-build them into the mingw sysroot and point gdb at them.
-  # gdb cross to mingw also can't use the build host's Python, so --without-python.
-  local GDB_EXTRA=""
-  if [ -n "$WITH_HOST" ]; then
-    local DEPS; DEPS="$(HOST="$WITH_HOST" WORK="$WORK" bash "$SRC/build/prepare-mingw-deps.sh" | tail -1)"
-    GDB_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --without-python"
-    log "mingw gdb deps in $DEPS; GDB_TARGET_FLAGS_EXTRA=$GDB_EXTRA"
-  fi
   # Statically link the C++ runtime into the host tools so the binaries don't
   # carry GLIBCXX_*/CXXABI_* deps on a newer libstdc++.so than the deployment
   # box has. Applies to the GNU (gcc/g++) host -> Linux + the mingw Windows host;
@@ -63,21 +78,31 @@ stage_gcc(){
   if [ "$HOSTOS" != macos ]; then
     export LDFLAGS="-static-libstdc++ -static-libgcc${LDFLAGS:+ $LDFLAGS}"
   fi
-  log "configure (GCC + multilib newlib)${WITH_HOST:+ canadian-cross host=$WITH_HOST}"
-  rm -rf "$BUILD" && mkdir -p "$BUILD" && cd "$BUILD"
-  "$SRC/configure" \
-    --prefix="$PREFIX" \
-    --with-arch="$ARCH" --with-abi="$ABI" \
-    --with-multilib-generator="$MULTILIB" \
-    --with-languages=c,c++ \
-    --enable-strip \
-    ${WITH_HOST:+--with-host="$WITH_HOST"} \
-    --with-gcc-src="$SOURCES/gcc" \
-    --with-binutils-src="$SOURCES/binutils" \
-    --with-newlib-src="$SOURCES/newlib" \
-    --with-gdb-src="$SOURCES/gdb"
-  log "make newlib -j$NPROC"
-  make -j"$NPROC" newlib ${GDB_EXTRA:+GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA"}
+
+  if [ -n "$WITH_HOST" ]; then
+    # Canadian cross (build=this machine, host=Windows, target=riscv): the host
+    # cc1/xgcc are Windows .exe's that can't run here, so GCC needs a *native*
+    # (build->target) riscv gcc on PATH to compile target libgcc/libstdc++ and
+    # dump specs. The repo's --with-host doesn't build one (it just adds
+    # --host=... everywhere), so do a native pre-pass into a throwaway prefix and
+    # put it FIRST on PATH. The canadian pass installs the Windows .exe's into its
+    # own $PREFIX; PATH order keeps the runnable native gcc for target steps.
+    local NATIVE="$WORK/native-toolchain"
+    if [ ! -x "$NATIVE/bin/${TUPLE}-gcc" ]; then
+      log "native pre-pass for the canadian cross -> $NATIVE"
+      gcc_build_into "$NATIVE" ""
+    fi
+    export PATH="$NATIVE/bin:$PATH"
+    log "native build->target compiler on PATH: $(command -v "${TUPLE}-gcc")"
+
+    # gdb needs host gmp/mpfr (not packaged for mingw) -> cross-built into the
+    # mingw sysroot; and the canadian gdb can't use the build host's Python.
+    local DEPS; DEPS="$(HOST="$WITH_HOST" WORK="$WORK" bash "$SRC/build/prepare-mingw-deps.sh" | tail -1)"
+    GDB_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --without-python"
+    log "mingw gdb deps in $DEPS; GDB_TARGET_FLAGS_EXTRA=$GDB_EXTRA"
+  fi
+
+  gcc_build_into "$PREFIX" "$WITH_HOST"
   log "GCC pass done; sanity check"
   if [ -z "$WITH_HOST" ]; then
     "$PREFIX/bin/${TUPLE}-gcc" -v 2>&1 | tail -3 || true
