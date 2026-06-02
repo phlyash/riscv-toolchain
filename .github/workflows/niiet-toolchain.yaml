@@ -17,8 +17,20 @@ permissions:
   contents: read
 
 jobs:
-  linux-x86_64:
-    runs-on: ubuntu-24.04
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            base: quay.io/pypa/manylinux2014_x86_64
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            base: quay.io/pypa/manylinux2014_aarch64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    # x86_64 is the validated anchor; arm64 is experimental until shaken out.
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
     steps:
       - uses: actions/checkout@v6
       - name: Free disk space
@@ -26,13 +38,13 @@ jobs:
       - name: Disk before
         run: df -h / /mnt
       - name: Build image
-        run: docker build -t niiet-rv-linux -f build/Dockerfile.linux build/
+        run: docker build -t niiet-rv-linux --build-arg BASE=${{ matrix.base }} -f build/Dockerfile.linux build/
       - name: Cache patched sources
         id: src
         uses: actions/cache@v5
         with:
           path: /mnt/sources
-          key: niiet-src-linux-${{ hashFiles('patch/riscv-*.patch') }}-v1
+          key: niiet-src-linux-${{ matrix.arch }}-${{ hashFiles('patch/riscv-*.patch') }}-v1
       - name: Prepare sources
         if: steps.src.outputs.cache-hit != 'true'
         run: |
@@ -52,7 +64,7 @@ jobs:
         run: df -h / /mnt
       - uses: actions/upload-artifact@v7
         with:
-          name: riscv32-imafdc-elf-x86_64-linux-gcc-clang
+          name: riscv32-imafdc-elf-${{ matrix.arch }}-linux-gcc-clang
           path: /mnt/out/*.tar.xz
           compression-level: 0
 
