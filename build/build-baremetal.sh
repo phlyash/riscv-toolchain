@@ -67,7 +67,8 @@ stage_gcc(){
     ${WITH_HOST:+--with-host="$WITH_HOST"} \
     --with-gcc-src="$SOURCES/gcc" \
     --with-binutils-src="$SOURCES/binutils" \
-    --with-newlib-src="$SOURCES/newlib"
+    --with-newlib-src="$SOURCES/newlib" \
+    --with-gdb-src="$SOURCES/gdb"
   log "make newlib -j$NPROC"
   make -j"$NPROC" newlib ${GDB_EXTRA:+GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA"}
   log "GCC pass done; sanity check"

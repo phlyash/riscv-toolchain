@@ -26,6 +26,7 @@ COMPONENTS=(
   "binutils|https://sourceware.org/git/binutils-gdb.git|675b9d6|riscv-binutils.patch"
   "gcc|https://github.com/gcc-mirror/gcc.git|cd0059a|riscv-gcc.patch"
   "newlib|https://sourceware.org/git/newlib-cygwin.git|26f7004|riscv-newlib.patch"
+  "gdb|https://sourceware.org/git/binutils-gdb.git|6bda1c1|riscv-gdb.patch"
 )
 
 clone_checkout(){  # dir url sha
