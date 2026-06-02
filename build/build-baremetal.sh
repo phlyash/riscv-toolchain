@@ -31,8 +31,10 @@ ARCH=rv32imafdc_zicsr_zifencei
 ABI=ilp32d
 TUPLE=riscv32-unknown-elf
 
-# Reduced rv32 imafdc subset chain (6 libs). newlib-nano built automatically.
-MULTILIB="rv32i_zicsr_zifencei-ilp32--;rv32im_zicsr_zifencei-ilp32--;rv32imc_zicsr_zifencei-ilp32--;rv32imac_zicsr_zifencei-ilp32--;rv32imafc_zicsr_zifencei-ilp32f--;rv32imafdc_zicsr_zifencei-ilp32d--"
+# Reduced rv32 imafdc subset chain. newlib-nano built automatically.
+# Last entry: bare rv32imafdc/ilp32d (double-float) so '-march=rv32imafdc -mabi=ilp32d'
+# without the explicit zicsr/zifencei suffix resolves to a real multilib.
+MULTILIB="rv32i_zicsr_zifencei-ilp32--;rv32im_zicsr_zifencei-ilp32--;rv32imc_zicsr_zifencei-ilp32--;rv32imac_zicsr_zifencei-ilp32--;rv32imafc_zicsr_zifencei-ilp32f--;rv32imafdc_zicsr_zifencei-ilp32d--;rv32imafdc-ilp32d--"
 
 case "$(uname -s)" in
   Linux)  HOSTOS=linux ;;
@@ -54,6 +56,7 @@ stage_gcc(){
     --with-languages=c,c++ \
     --enable-strip \
     ${WITH_HOST:+--with-host="$WITH_HOST"} \
+    ${WITH_HOST:+--disable-gdb} \
     --with-gcc-src="$SOURCES/gcc" \
     --with-binutils-src="$SOURCES/binutils" \
     --with-newlib-src="$SOURCES/newlib"
