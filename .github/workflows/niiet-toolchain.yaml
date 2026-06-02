@@ -68,8 +68,16 @@ jobs:
           path: /mnt/out/*.tar.xz
           compression-level: 0
 
-  macos-arm64:
-    runs-on: macos-14
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
     continue-on-error: true        # experimental until shaken out on the runner
     steps:
       - uses: actions/checkout@v6
@@ -84,16 +92,17 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/sources
-          key: niiet-src-macos-${{ hashFiles('patch/riscv-*.patch') }}-v1
+          key: niiet-src-${{ matrix.arch }}-macos-${{ hashFiles('patch/riscv-*.patch') }}-v1
       - name: Prepare sources
         if: steps.src.outputs.cache-hit != 'true'
         run: SOURCES="$GITHUB_WORKSPACE/sources" bash build/prepare-sources.sh
       - name: Build (gcc + clang + package)
         # NOTE: macOS source trees may need a case-sensitive volume (see macos-build.md).
+        # brew --prefix is /opt/homebrew on arm64 and /usr/local on Intel.
         run: |
-          B=/opt/homebrew/opt
+          B="$(brew --prefix)/opt"
           export PATH="$B/flock/bin:$B/bison/bin:$B/gnu-sed/libexec/gnubin:$B/gawk/libexec/gnubin:$B/make/libexec/gnubin:$PATH"
-          # Homebrew installs gmp/mpfr/mpc/isl under /opt/homebrew/opt; configure
+          # Homebrew installs gmp/mpfr/mpc/isl under $(brew --prefix)/opt; configure
           # (gdb/gcc) doesn't search there by default.
           export LDFLAGS="-L$B/gmp/lib -L$B/mpfr/lib -L$B/libmpc/lib -L$B/isl/lib"
           export CPPFLAGS="-I$B/gmp/include -I$B/mpfr/include -I$B/libmpc/include -I$B/isl/include"
@@ -103,7 +112,7 @@ jobs:
             bash build/build-baremetal.sh all
       - uses: actions/upload-artifact@v7
         with:
-          name: riscv32-imafdc-elf-arm64-macos-gcc-clang
+          name: riscv32-imafdc-elf-${{ matrix.arch }}-macos-gcc-clang
           path: out/*.tar.xz
           compression-level: 0
 
