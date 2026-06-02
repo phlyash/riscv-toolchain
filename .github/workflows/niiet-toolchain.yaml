@@ -113,7 +113,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
-            build-essential autoconf automake libtool texinfo bison flex gawk \
+            build-essential autoconf automake libtool texinfo bison flex gawk gettext \
             libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev \
             python3 curl xz-utils file
           # gdb uses std::thread -> require the posix-threads mingw variant
