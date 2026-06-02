@@ -2,7 +2,7 @@ name: NIIET baremetal toolchain
 
 # Builds the rv32imafdc_zicsr_zifencei baremetal toolchain (GCC + clang/lld from
 # Syntacore's snippy LLVM, reduced rv32 multilib, newlib + newlib-nano) for:
-#   - Linux x86_64   (AlmaLinux 8 / glibc 2.28 -> portable)   [VALIDATED recipe]
+#   - Linux x86_64   (manylinux2014 / glibc 2.17 -> portable)  [VALIDATED recipe]
 #   - macOS arm64    (native)                                  [experimental]
 #   - Windows x86_64 (mingw canadian-cross, GNU only)          [experimental: clang TODO]
 #
@@ -46,7 +46,7 @@ jobs:
             -v "$PWD":/src -v /mnt/sources:/sources \
             -v /mnt/work:/work -v /mnt/prefix:/opt/riscv -v /mnt/out:/out \
             niiet-rv-linux \
-            bash -c 'source /opt/rh/gcc-toolset-12/enable; /src/build/build-baremetal.sh all'
+            bash -c '/src/build/build-baremetal.sh all'
       - name: Disk after
         if: always()
         run: df -h / /mnt

@@ -53,15 +53,18 @@ Strategy (to be validated empirically, in order):
 
 ## Per-host
 
-- **Linux**: `build/Dockerfile.linux` (AlmaLinux 8 / glibc 2.28 + gcc-toolset-12) → portable.
-- **Windows**: canadian cross from the same container, `--with-host=x86_64-w64-mingw32`
-  (GNU side). clang-for-Windows needs extra cmake (`-DLLVM_HOST_TRIPLE`, mingw C++ rt).
+- **Linux**: `build/Dockerfile.linux` (manylinux2014 / CentOS 7 / glibc 2.17 + devtoolset-10)
+  → runs on RHEL/CentOS 7 and newer. C++ runtime statically linked (-static-libstdc++
+  -static-libgcc in build-baremetal.sh) so no GLIBCXX/CXXABI deps either.
+- **Windows**: canadian cross on the Ubuntu runner (Linux-hosted mingw GCC 13),
+  `--with-host=x86_64-w64-mingw32` (GNU side). clang-for-Windows needs extra cmake
+  (`-DLLVM_HOST_TRIPLE`, mingw C++ rt).
 - **macOS arm64**: native on the Mac; `source macos.zsh` first (homebrew bison/gawk/gsed/
   gmake, gmp/mpfr/mpc), build on a case-sensitive volume.
 
 ## Scripts (in build/)
 
-- `setup-almalinux8.sh` — install build deps on AlmaLinux 8 (shared by Dockerfile + CI).
+- `setup-manylinux2014.sh` — install build deps on the manylinux2014 (CentOS 7) base.
 - `Dockerfile.linux` — the portable build image. Build with **context = build/**:
   `docker build -t niiet-rv-linux -f build/Dockerfile.linux build/`
 - `prepare-sources.sh` — clone pinned bases + apply patches + clone snippy into `$SOURCES`.
@@ -79,8 +82,8 @@ docker run --rm -v "$PWD":/src -v /tmp/rv-patch-verify:/sources \
 ## CI: `.github/workflows/niiet-toolchain.yaml`
 
 Manual (`workflow_dispatch`) + version tags. Jobs:
-- **linux-x86_64** — AlmaLinux 8 container on an x86_64 runner. VALIDATED recipe; the real
-  portable x86_64 deliverable. Sources cached by patch-file hash.
+- **linux-x86_64** — manylinux2014 (glibc 2.17) container on an x86_64 runner. The real
+  portable x86_64 deliverable (runs on CentOS/RHEL 7+). Sources cached by patch-file hash.
 - **macos-arm64** — native on `macos-14`. Experimental (`continue-on-error`): needs a real
   CI run to shake out (PATH for GNU tools; possible case-sensitive-FS requirement).
 - **windows-x86_64** — mingw canadian-cross from the container, **GCC only** for now

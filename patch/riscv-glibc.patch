@@ -1,0 +1,167 @@
+From f496c004ad5a0da4693f204888a407347496ffcd Mon Sep 17 00:00:00 2001
+From: Andrei Khorokhorin <andrei.khorokhorin@cloudbear.ru>
+Date: Fri, 12 Jul 2024 23:22:52 +0300
+Subject: Add arch to libs path
+
+Change-Id: Ib74a5c8a0d2b5b66b3bf8821c68337b8867c83bd
+---
+ config.h.in                                  |  3 +++
+ scripts/lib-names.awk                        |  2 +-
+ sysdeps/riscv/preconfigure                   |  3 +++
+ sysdeps/unix/sysv/linux/riscv/shlib-versions | 12 ++++++++++--
+ 4 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/config.h.in b/config.h.in
+index 44a34072a4..d8e9247ca0 100644
+--- a/config.h.in
++++ b/config.h.in
+@@ -135,6 +135,9 @@
+ /* RISC-V floating-point ABI for ld.so.  */
+ #undef RISCV_ABI_FLEN
+ 
++/* RISC-V bitmanip support for ld.so.  */
++#undef RISCV_BITMANIP
++
+ /* LOONGARCH integer ABI for ld.so.  */
+ #undef LOONGARCH_ABI_GRLEN
+ 
+diff --git a/scripts/lib-names.awk b/scripts/lib-names.awk
+index a9e018bba1..5bdd384fea 100644
+--- a/scripts/lib-names.awk
++++ b/scripts/lib-names.awk
+@@ -27,6 +27,6 @@
+ END {
+   for (elt in macros) {
+     split(elt, x);
+-    printf("%-40s%s\n", "#define " x[2], macros[elt]);
++    printf("%-90s%s\n", "#define " x[2], macros[elt]);
+   }
+ }
+diff --git a/sysdeps/riscv/preconfigure b/sysdeps/riscv/preconfigure
+index a5de5ccb7d..8d8d3834c1 100644
+--- a/sysdeps/riscv/preconfigure
++++ b/sysdeps/riscv/preconfigure
+@@ -7,6 +7,7 @@ riscv*)
+     flen=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | sed -n 's/^#define __riscv_flen \(.*\)/\1/p'`
+     float_abi=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | sed -n 's/^#define __riscv_float_abi_\([^ ]*\) .*/\1/p'`
+     atomic=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | grep '#define __riscv_atomic' | cut -d' ' -f2`
++    bitmanip=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | grep -c '#define __riscv_zb[abcs]'`
+ 
+     case "$xlen" in
+     64 | 32)
+@@ -55,6 +56,8 @@ riscv*)
+ 	;;
+     esac
+ 
++    [ $bitmanip -eq 4 ] && $as_echo "#define RISCV_BITMANIP 1" >>confdefs.h
++
+     base_machine=riscv
+     machine=riscv/rv$xlen/$float_machine
+ 
+diff --git a/sysdeps/unix/sysv/linux/riscv/shlib-versions b/sysdeps/unix/sysv/linux/riscv/shlib-versions
+index e8a7be7313..1fd991dd29 100644
+--- a/sysdeps/unix/sysv/linux/riscv/shlib-versions
++++ b/sysdeps/unix/sysv/linux/riscv/shlib-versions
+@@ -1,12 +1,20 @@
+ %if RISCV_ABI_XLEN == 64 && RISCV_ABI_FLEN == 64
+ DEFAULT		GLIBC_2.27
+-ld=ld-linux-riscv64-lp64d.so.1
++%if RISCV_BITMANIP == 1
++ld=ld-linux-riscv64-rv64imafdc_zicsr_zifencei_zmmul_zba_zbb_zbc_zbs-lp64d.so.1
++%else
++ld=ld-linux-riscv64-rv64imafdc_zicsr_zifencei_zmmul-lp64d.so.1
++%endif
+ %elif RISCV_ABI_XLEN == 64 && RISCV_ABI_FLEN == 0
+ DEFAULT		GLIBC_2.27
+ ld=ld-linux-riscv64-lp64.so.1
+ %elif RISCV_ABI_XLEN == 32 && RISCV_ABI_FLEN == 64
+ DEFAULT		GLIBC_2.33
+-ld=ld-linux-riscv32-ilp32d.so.1
++%if RISCV_BITMANIP == 1
++ld=ld-linux-riscv32-rv32imafdc_zicsr_zifencei_zmmul_zba_zbb_zbc_zbs-ilp32d.so.1
++%else
++ld=ld-linux-riscv32-rv32imafdc_zicsr_zifencei_zmmul-ilp32d.so.1
++%endif
+ %elif RISCV_ABI_XLEN == 32 && RISCV_ABI_FLEN == 0
+ DEFAULT		GLIBC_2.33
+ ld=ld-linux-riscv32-ilp32.so.1
+-- 
+2.39.3
+
+
+From db174cc8f7fdd47b5dce03e352ab72dedef5cd9a Mon Sep 17 00:00:00 2001
+From: Andrei Khorokhorin <andrei.khorokhorin@cloudbear.ru>
+Date: Wed, 22 Jan 2025 19:16:23 +0300
+Subject: Add zicond+bitmanip glibc configurations
+
+Issue: CB-4832
+Change-Id: I229b789009de81505a1685d4d10328d6580576c1
+---
+ config.h.in                                  | 3 +++
+ sysdeps/riscv/preconfigure                   | 3 +++
+ sysdeps/unix/sysv/linux/riscv/shlib-versions | 8 ++++++--
+ 3 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/config.h.in b/config.h.in
+index d8e9247ca0..99784d86d6 100644
+--- a/config.h.in
++++ b/config.h.in
+@@ -138,6 +138,9 @@
+ /* RISC-V bitmanip support for ld.so.  */
+ #undef RISCV_BITMANIP
+ 
++/* RISC-V zicond support for ld.so.  */
++#undef RISCV_ZICOND
++
+ /* LOONGARCH integer ABI for ld.so.  */
+ #undef LOONGARCH_ABI_GRLEN
+ 
+diff --git a/sysdeps/riscv/preconfigure b/sysdeps/riscv/preconfigure
+index 8d8d3834c1..dc80e7f850 100644
+--- a/sysdeps/riscv/preconfigure
++++ b/sysdeps/riscv/preconfigure
+@@ -8,6 +8,7 @@ riscv*)
+     float_abi=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | sed -n 's/^#define __riscv_float_abi_\([^ ]*\) .*/\1/p'`
+     atomic=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | grep '#define __riscv_atomic' | cut -d' ' -f2`
+     bitmanip=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | grep -c '#define __riscv_zb[abcs]'`
++    zicond=`$CC $CFLAGS $CPPFLAGS -E -dM -xc /dev/null | grep '#define __riscv_zicond' | cut -d' ' -f2`
+ 
+     case "$xlen" in
+     64 | 32)
+@@ -58,6 +59,8 @@ riscv*)
+ 
+     [ $bitmanip -eq 4 ] && $as_echo "#define RISCV_BITMANIP 1" >>confdefs.h
+ 
++    [ -n "$zicond" ] && $as_echo "#define RISCV_ZICOND 1" >>confdefs.h
++
+     base_machine=riscv
+     machine=riscv/rv$xlen/$float_machine
+ 
+diff --git a/sysdeps/unix/sysv/linux/riscv/shlib-versions b/sysdeps/unix/sysv/linux/riscv/shlib-versions
+index 1fd991dd29..78eb810199 100644
+--- a/sysdeps/unix/sysv/linux/riscv/shlib-versions
++++ b/sysdeps/unix/sysv/linux/riscv/shlib-versions
+@@ -1,6 +1,8 @@
+ %if RISCV_ABI_XLEN == 64 && RISCV_ABI_FLEN == 64
+ DEFAULT		GLIBC_2.27
+-%if RISCV_BITMANIP == 1
++%if RISCV_BITMANIP == 1 && RISCV_ZICOND == 1
++ld=ld-linux-riscv64-rv64imafdc_zicond_zicsr_zifencei_zmmul_zba_zbb_zbc_zbs-lp64d.so.1
++%elif RISCV_BITMANIP == 1 && RISCV_ZICOND == 0
+ ld=ld-linux-riscv64-rv64imafdc_zicsr_zifencei_zmmul_zba_zbb_zbc_zbs-lp64d.so.1
+ %else
+ ld=ld-linux-riscv64-rv64imafdc_zicsr_zifencei_zmmul-lp64d.so.1
+@@ -10,7 +12,9 @@ DEFAULT		GLIBC_2.27
+ ld=ld-linux-riscv64-lp64.so.1
+ %elif RISCV_ABI_XLEN == 32 && RISCV_ABI_FLEN == 64
+ DEFAULT		GLIBC_2.33
+-%if RISCV_BITMANIP == 1
++%if RISCV_BITMANIP == 1 && RISCV_ZICOND == 1
++ld=ld-linux-riscv32-rv32imafdc_zicond_zicsr_zifencei_zmmul_zba_zbb_zbc_zbs-ilp32d.so.1
++%elif RISCV_BITMANIP == 1 && RISCV_ZICOND == 0
+ ld=ld-linux-riscv32-rv32imafdc_zicsr_zifencei_zmmul_zba_zbb_zbc_zbs-ilp32d.so.1
+ %else
+ ld=ld-linux-riscv32-rv32imafdc_zicsr_zifencei_zmmul-ilp32d.so.1
+-- 
+2.39.3
+

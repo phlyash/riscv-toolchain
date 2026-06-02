@@ -56,6 +56,13 @@ stage_gcc(){
     GDB_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --without-python"
     log "mingw gdb deps in $DEPS; GDB_TARGET_FLAGS_EXTRA=$GDB_EXTRA"
   fi
+  # Statically link the C++ runtime into the host tools so the binaries don't
+  # carry GLIBCXX_*/CXXABI_* deps on a newer libstdc++.so than the deployment
+  # box has. Applies to the GNU (gcc/g++) host -> Linux + the mingw Windows host;
+  # NOT macOS (clang/libc++ has no static libstdc++).
+  if [ "$HOSTOS" != macos ]; then
+    export LDFLAGS="-static-libstdc++ -static-libgcc${LDFLAGS:+ $LDFLAGS}"
+  fi
   log "configure (GCC + multilib newlib)${WITH_HOST:+ canadian-cross host=$WITH_HOST}"
   rm -rf "$BUILD" && mkdir -p "$BUILD" && cd "$BUILD"
   "$SRC/configure" \
@@ -91,9 +98,14 @@ stage_clang(){
   rm -rf "$LB" && mkdir -p "$LB" && cd "$LB"
   local PY; PY="$(command -v python3.11 || command -v python3)"
   local LLVM_DIST="clang;clang-resource-headers;lld"
+  # Same portability goal as the GNU host: statically link libstdc++/libgcc into
+  # the clang/lld binaries (LLVM_STATIC_LINK_CXX_STDLIB) on Linux. Not on macOS.
+  local LLVM_STATIC_CXX=OFF
+  [ "$HOSTOS" != macos ] && LLVM_STATIC_CXX=ON
   cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DLLVM_STATIC_LINK_CXX_STDLIB="$LLVM_STATIC_CXX" \
     -DPython3_EXECUTABLE="$PY" \
     -DLLVM_TARGETS_TO_BUILD="RISCV" \
     -DLLVM_ENABLE_PROJECTS="clang;lld" \
