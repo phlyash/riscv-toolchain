@@ -27,8 +27,8 @@ WITH_HOST="${WITH_HOST:-}"
 BUILD="$WORK/build"
 LB="$WORK/llvm-build"
 NPROC="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
-ARCH=rv32imafdc_zicsr_zifencei
-ABI=ilp32d
+ARCH=rv32i_zicsr_zifencei
+ABI=ilp32
 TUPLE=riscv32-unknown-elf
 
 # Reduced rv32 imafdc subset chain. newlib-nano built automatically.
@@ -110,19 +110,74 @@ stage_gcc(){
   fi
 }
 
+# Cross-build clang/lld for a mingw Windows host (canadian cross). LLVM needs
+# RUNNABLE *-tblgen during its build; the host ones are .exe, so build native
+# tblgens first and point the cross build at them (LLVM_NATIVE_TOOL_DIR). Host
+# link is fully static (-static + static libgcc/libstdc++/winpthread) and all
+# optional host deps are disabled so clang.exe/lld.exe carry no extra mingw DLLs.
+#   $1 = python   $2 = distribution component list
+stage_clang_cross(){
+  local PY="$1" LLVM_DIST="$2"
+  local NAT="$WORK/llvm-native-tblgen"
+  if [ ! -x "$NAT/bin/llvm-tblgen" ] || [ ! -x "$NAT/bin/clang-tblgen" ]; then
+    log "native tblgen pre-pass for the clang cross -> $NAT"
+    rm -rf "$NAT" && mkdir -p "$NAT" && cd "$NAT"
+    cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLVM_ENABLE_PROJECTS="clang" \
+      -DLLVM_TARGETS_TO_BUILD="RISCV" \
+      -DPython3_EXECUTABLE="$PY"
+    ninja -j"$NPROC" llvm-tblgen llvm-min-tblgen clang-tblgen
+  fi
+
+  log "cross-build clang/lld -> $WITH_HOST (host=$PREFIX)"
+  rm -rf "$LB" && mkdir -p "$LB" && cd "$LB"
+  cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_SYSTEM_NAME=Windows \
+    -DCMAKE_C_COMPILER="${WITH_HOST}-gcc" \
+    -DCMAKE_CXX_COMPILER="${WITH_HOST}-g++" \
+    -DCMAKE_RC_COMPILER="${WITH_HOST}-windres" \
+    -DCMAKE_STRIP="${WITH_HOST}-strip" \
+    -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+    -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+    -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+    -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
+    -DCMAKE_SHARED_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
+    -DLLVM_HOST_TRIPLE="${WITH_HOST/-w64-mingw32/-w64-windows-gnu}" \
+    -DLLVM_NATIVE_TOOL_DIR="$NAT/bin" \
+    -DPython3_EXECUTABLE="$PY" \
+    -DLLVM_TARGETS_TO_BUILD="RISCV" \
+    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DLLVM_DEFAULT_TARGET_TRIPLE="$TUPLE" \
+    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+    -DLLVM_ENABLE_SPHINX=OFF \
+    -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF \
+    -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_TERMINFO=OFF \
+    -DLLVM_PARALLEL_LINK_JOBS=2 \
+    -DLLVM_BINUTILS_INCDIR="$SOURCES/binutils/include" \
+    -DLLVM_DISTRIBUTION_COMPONENTS="$LLVM_DIST"
+  ninja -j"$NPROC" distribution
+  ninja install-distribution-stripped
+  log "cross clang done; installed clang.exe/lld.exe into $PREFIX/bin"
+}
+
 # Build clang/lld from Syntacore's LLVM directly with cmake, targeting baremetal
 # and reusing the Pass-1 GCC sysroot. Installs ONLY clang + builtin headers + lld,
 # stripped (LLVM distribution-components) — keeps it small and avoids clobbering
 # the multilib GCC that the Makefile's --enable-llvm path would.
 stage_clang(){
+  local PY; PY="$(command -v python3.11 || command -v python3)"
+  local LLVM_DIST="clang;clang-resource-headers;lld"
   if [ -n "$WITH_HOST" ]; then
-    log "SKIP clang: cross-building clang to '$WITH_HOST' is not wired yet (TODO: mingw toolchain file + native tablegen). GNU toolchain only for this host."
+    stage_clang_cross "$PY" "$LLVM_DIST"
+    log "clang cross sanity: file"
+    file "$PREFIX/bin/clang.exe" || true
     return 0
   fi
   log "configure + build clang/lld from snippy LLVM (minimal distribution)"
   rm -rf "$LB" && mkdir -p "$LB" && cd "$LB"
-  local PY; PY="$(command -v python3.11 || command -v python3)"
-  local LLVM_DIST="clang;clang-resource-headers;lld"
   # Same portability goal as the GNU host: statically link libstdc++/libgcc into
   # the clang/lld binaries (LLVM_STATIC_LINK_CXX_STDLIB) on Linux. Not on macOS.
   local LLVM_STATIC_CXX=OFF
