@@ -21,16 +21,25 @@ clang comes from **Syntacore's LLVM fork** `https://github.com/syntacore/snippy`
 (full llvm-project monorepo). We build `llvm;clang;lld` + baremetal runtimes from it;
 we do NOT build the `llvm-snippy` tool / `snippy_basic` preset.
 
-## Multilib (reduced rv32 imafdc subset chain)
+## Multilib (reduced rv32 subset chain, bare canonical naming)
 
-Passed as `--with-multilib-generator=` (implies `--enable-multilib`, bare-metal only):
+Passed as `--with-multilib-generator=` together with `--with-isa-spec=20191213`
+(implies `--enable-multilib`, bare-metal only):
 
 ```
-rv32i_zicsr_zifencei-ilp32--;rv32im_zicsr_zifencei-ilp32--;rv32imc_zicsr_zifencei-ilp32--;rv32imac_zicsr_zifencei-ilp32--;rv32imafc_zicsr_zifencei-ilp32f--;rv32imafdc_zicsr_zifencei-ilp32d--
+rv32i-ilp32--;rv32im-ilp32--;rv32imc-ilp32--;rv32imac-ilp32--;rv32imafc-ilp32f--;rv32imafdc-ilp32d--;rv32imcp-ilp32--;rv32imafdcp-ilp32d--
 ```
 
-(6 libs: i, im, imc, imac → ilp32; imafc → ilp32f; imafdc → ilp32d. newlib-nano built
-automatically alongside full newlib.)
+8 libs. Arch strings are **bare** (no `_zicsr_zifencei` suffix) so GCC's multilib
+directory names equal clang's normalized `-march` keys — both compilers select the
+same `.a`. The last two add the **P** (DSP/packed-SIMD) extension: `rv32imcp/ilp32`
+(integer DSP, no FPU) and `rv32imafdcp/ilp32d` (full float + DSP); on GCC `p`
+expands to `zmmul,zbpbo,zpn,zpsfoperand` (v0.9.11) via the CloudBEAR patch, and
+snippy clang accepts the same march. newlib-nano is built per variant. The Linux
+CI job runs `build/verify-multilib.sh` to hard-fail if clang and gcc ever disagree
+on the selected multilib, if clang can't parse an `-march`, or if a variant won't
+link. NOTE: installed dir names changed from `rv32imc_zicsr_zifencei/` to
+`rv32imc/` — update anything that hardcoded the old paths.
 
 ## Two-pass constraint
 
