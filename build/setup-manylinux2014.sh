@@ -21,6 +21,11 @@ yum -y install \
     gmp-devel mpfr-devel libmpc-devel zlib-devel expat-devel \
     bzip2 xz file which diffutils findutils ninja-build
 
+# EPEL packages the binary as 'ninja-build', but CMake's Ninja generator looks for
+# 'ninja'. (The x86_64 manylinux image happens to also carry a 'ninja'; aarch64
+# does not.) Symlink it so both arches resolve the same.
+command -v ninja >/dev/null 2>&1 || ln -sf "$(command -v ninja-build)" /usr/local/bin/ninja
+
 # Snippy's LLVM needs Python >= 3.8. CentOS 7's system python is 2; expose a
 # modern one (manylinux ships relocatable CPythons under /opt/python).
 PY="$(ls -d /opt/python/cp311-cp311/bin/python3 /opt/python/cp31*-cp31*/bin/python3 2>/dev/null | head -1)"

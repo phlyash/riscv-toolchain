@@ -136,7 +136,7 @@ jobs:
             gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
             build-essential autoconf automake libtool texinfo bison flex gawk gettext \
             libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev \
-            cmake ninja-build python3 python3-distutils curl xz-utils file
+            cmake ninja-build python3 curl xz-utils file
           # gdb uses std::thread -> require the posix-threads mingw variant
           sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
           sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
