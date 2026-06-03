@@ -9,7 +9,8 @@
 # handled separately by -static-libstdc++ -static-libgcc in build-baremetal.sh.
 #
 # manylinux2014 already provides on PATH: devtoolset-10 (GCC 10, C++17-capable,
-# linked against glibc 2.17) and a recent cmake + ninja (>=3.20, needed by LLVM).
+# linked against glibc 2.17) and a recent cmake. ninja is NOT reliably present
+# (x86_64 has a modern one, aarch64 does not), so we install it from PyPI below.
 # Python interpreters live under /opt/python/*/bin (not on PATH) — we symlink one.
 #
 set -euo pipefail
@@ -19,17 +20,20 @@ yum install epel-release -y
 yum -y install \
     make autoconf automake libtool texinfo gawk bison flex patch \
     gmp-devel mpfr-devel libmpc-devel zlib-devel expat-devel \
-    bzip2 xz file which diffutils findutils ninja-build
-
-# EPEL packages the binary as 'ninja-build', but CMake's Ninja generator looks for
-# 'ninja'. (The x86_64 manylinux image happens to also carry a 'ninja'; aarch64
-# does not.) Symlink it so both arches resolve the same.
-command -v ninja >/dev/null 2>&1 || ln -sf "$(command -v ninja-build)" /usr/local/bin/ninja
+    bzip2 xz file which diffutils findutils
 
 # Snippy's LLVM needs Python >= 3.8. CentOS 7's system python is 2; expose a
 # modern one (manylinux ships relocatable CPythons under /opt/python).
 PY="$(ls -d /opt/python/cp311-cp311/bin/python3 /opt/python/cp31*-cp31*/bin/python3 2>/dev/null | head -1)"
 ln -sf "$PY" /usr/local/bin/python3
 ln -sf "$PY" /usr/local/bin/python3.11
+
+# Do NOT use EPEL 7's ninja: it's 1.7.x, which predates multi-output depslog support
+# and dies on LLVM's generated build.ninja ("multiple outputs aren't supported by
+# depslog"). The x86_64 manylinux image happens to ship a modern ninja in
+# /usr/local/bin; aarch64 does not. Install a modern ninja from PyPI on both arches
+# (manylinux has wheels) and put it first on PATH.
+"$PY" -m pip install --no-cache-dir ninja
+ln -sf "$(dirname "$PY")/ninja" /usr/local/bin/ninja
 
 yum clean all
