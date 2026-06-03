@@ -58,7 +58,7 @@ jobs:
             -v "$PWD":/src -v /mnt/sources:/sources \
             -v /mnt/work:/work -v /mnt/prefix:/opt/riscv -v /mnt/out:/out \
             niiet-rv-linux \
-            bash -c '/src/build/build-baremetal.sh all'
+            bash -c '/src/build/build-baremetal.sh all && PREFIX=/opt/riscv bash /src/build/verify-multilib.sh'
       - name: Disk after
         if: always()
         run: df -h / /mnt
