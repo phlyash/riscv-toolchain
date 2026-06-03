@@ -31,10 +31,13 @@ ARCH=rv32i_zicsr_zifencei
 ABI=ilp32
 TUPLE=riscv32-unknown-elf
 
-# Reduced rv32 imafdc subset chain. newlib-nano built automatically.
-# Last entry: bare rv32imafdc/ilp32d (double-float) so '-march=rv32imafdc -mabi=ilp32d'
-# without the explicit zicsr/zifencei suffix resolves to a real multilib.
-MULTILIB="rv32i_zicsr_zifencei-ilp32--;rv32im_zicsr_zifencei-ilp32--;rv32imc_zicsr_zifencei-ilp32--;rv32imac_zicsr_zifencei-ilp32--;rv32imafc_zicsr_zifencei-ilp32f--;rv32imafdc_zicsr_zifencei-ilp32d--;rv32imafdc-ilp32d--"
+# Reduced rv32 subset chain, BARE canonical arch strings (no explicit
+# _zicsr_zifencei): these match what clang emits when it normalizes -march, so
+# GCC's multilib dir names and clang's multilib lookup keys are identical and both
+# compilers select the same .a. Combined with --with-isa-spec=20191213 below.
+# Last two add the P (DSP/packed-SIMD) extension: integer DSP (no FPU) + full+DSP.
+# newlib-nano is built automatically alongside each variant.
+MULTILIB="rv32i-ilp32--;rv32im-ilp32--;rv32imc-ilp32--;rv32imac-ilp32--;rv32imafc-ilp32f--;rv32imafdc-ilp32d--;rv32imcp-ilp32--;rv32imafdcp-ilp32d--"
 
 case "$(uname -s)" in
   Linux)  HOSTOS=linux ;;
@@ -58,6 +61,7 @@ gcc_build_into(){
   "$SRC/configure" \
     --prefix="$prefix" \
     --with-arch="$ARCH" --with-abi="$ABI" \
+    --with-isa-spec=20191213 \
     --with-multilib-generator="$MULTILIB" \
     --with-languages=c,c++ \
     --enable-strip \
