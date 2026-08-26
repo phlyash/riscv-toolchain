@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
+# Build the NIIET RISC-V baremetal (newlib) toolchain:
 #
-# Build the NIIET RISC-V baremetal (newlib) toolchain: GCC + clang(snippy)/lld,
-# reduced rv32 multilib, as small as possible.
+#   patched GCC/binutils/newlib/GDB
+#   upstream LLVM/Clang 22.1.8
+#   LLD
+#   clangd
+#   clang-format
+#   clang-tidy
 #
-# Runs both locally (inside build/Dockerfile.linux) and in CI. All paths are
-# environment variables with container-friendly defaults:
-#   SRC      this riscv-gnu-toolchain checkout        (default /src)
-#   SOURCES  patched trees: binutils gcc newlib llvm-snippy [gdb]  (default /sources)
-#   WORK     scratch build dir (fast local IO)        (default /work)
-#   PREFIX   install prefix                           (default /opt/riscv)
-#   OUT      directory to receive the tarball         (default /out)
-#   WITH_HOST  optional canadian-cross host, e.g. x86_64-w64-mingw32 (Windows)
-#
-# Stages:  gcc | clang | package | all
-#
+# GCC and Clang are installed into the same prefix and use
+# the GCC-built RISC-V newlib/sysroot.
 set -euo pipefail
 
 STAGE="${1:-all}"
@@ -121,22 +117,45 @@ stage_gcc(){
 # optional host deps are disabled so clang.exe/lld.exe carry no extra mingw DLLs.
 #   $1 = python   $2 = distribution component list
 stage_clang_cross(){
-  local PY="$1" LLVM_DIST="$2"
+  local PY="$1"
+  local LLVM_DIST="$2"
+
   local NAT="$WORK/llvm-native-tblgen"
-  if [ ! -x "$NAT/bin/llvm-tblgen" ] || [ ! -x "$NAT/bin/clang-tblgen" ]; then
-    log "native tblgen pre-pass for the clang cross -> $NAT"
-    rm -rf "$NAT" && mkdir -p "$NAT" && cd "$NAT"
-    cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
+
+
+  if [ ! -x "$NAT/bin/llvm-tblgen" ] || \
+     [ ! -x "$NAT/bin/clang-tblgen" ]; then
+
+    log "native tblgen pre-pass for LLVM cross -> $NAT"
+
+    rm -rf "$NAT"
+    mkdir -p "$NAT"
+    cd "$NAT"
+
+
+    cmake -G Ninja "$SRC/llvm/llvm" \
       -DCMAKE_BUILD_TYPE=Release \
-      -DLLVM_ENABLE_PROJECTS="clang" \
+      -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
       -DLLVM_TARGETS_TO_BUILD="RISCV" \
       -DPython3_EXECUTABLE="$PY"
-    ninja -j"$NPROC" llvm-tblgen llvm-min-tblgen clang-tblgen
+
+
+    ninja -j"$NPROC" \
+      llvm-tblgen \
+      llvm-min-tblgen \
+      clang-tblgen
   fi
 
-  log "cross-build clang/lld -> $WITH_HOST (host=$PREFIX)"
-  rm -rf "$LB" && mkdir -p "$LB" && cd "$LB"
-  cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
+
+  log "cross-build LLVM/Clang -> $WITH_HOST"
+
+
+  rm -rf "$LB"
+  mkdir -p "$LB"
+  cd "$LB"
+
+
+  cmake -G Ninja "$SRC/llvm/llvm" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DCMAKE_SYSTEM_NAME=Windows \
@@ -153,18 +172,30 @@ stage_clang_cross(){
     -DLLVM_NATIVE_TOOL_DIR="$NAT/bin" \
     -DPython3_EXECUTABLE="$PY" \
     -DLLVM_TARGETS_TO_BUILD="RISCV" \
-    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" \
     -DLLVM_DEFAULT_TARGET_TRIPLE="$TUPLE" \
-    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+    -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON \
     -DLLVM_ENABLE_SPHINX=OFF \
-    -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF \
-    -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_TERMINFO=OFF \
+    -DLLVM_ENABLE_DOXYGEN=OFF \
+    -DLLVM_INCLUDE_TESTS=OFF \
+    -DCLANG_INCLUDE_TESTS=OFF \
+    -DLLVM_INCLUDE_EXAMPLES=OFF \
+    -DLLVM_INCLUDE_BENCHMARKS=OFF \
+    -DLLVM_ENABLE_ZLIB=OFF \
+    -DLLVM_ENABLE_ZSTD=OFF \
+    -DLLVM_ENABLE_LIBXML2=OFF \
+    -DLLVM_ENABLE_TERMINFO=OFF \
+    -DLLVM_ENABLE_CURL=OFF \
     -DLLVM_PARALLEL_LINK_JOBS=2 \
     -DLLVM_BINUTILS_INCDIR="$SOURCES/binutils/include" \
     -DLLVM_DISTRIBUTION_COMPONENTS="$LLVM_DIST"
   ninja -j"$NPROC" distribution
   ninja install-distribution-stripped
-  log "cross clang done; installed clang.exe/lld.exe into $PREFIX/bin"
+  log "cross LLVM done"
+  file "$PREFIX/bin/clang.exe" || true
+  file "$PREFIX/bin/clangd.exe" || true
+  file "$PREFIX/bin/clang-format.exe" || true
+  file "$PREFIX/bin/clang-tidy.exe" || true
 }
 
 # Build clang/lld from Syntacore's LLVM directly with cmake, targeting baremetal
@@ -172,37 +203,57 @@ stage_clang_cross(){
 # stripped (LLVM distribution-components) — keeps it small and avoids clobbering
 # the multilib GCC that the Makefile's --enable-llvm path would.
 stage_clang(){
-  local PY; PY="$(command -v python3.11 || command -v python3)"
-  local LLVM_DIST="clang;clang-resource-headers;lld"
+  local PY
+  PY="$(command -v python3.11 || command -v python3)"
+  local LLVM_DIST="clang;clang-resource-headers;lld;clangd;clang-format;clang-tidy"
   if [ -n "$WITH_HOST" ]; then
     stage_clang_cross "$PY" "$LLVM_DIST"
     log "clang cross sanity: file"
     file "$PREFIX/bin/clang.exe" || true
+    file "$PREFIX/bin/clangd.exe" || true
+    file "$PREFIX/bin/clang-format.exe" || true
+    file "$PREFIX/bin/clang-tidy.exe" || true
     return 0
   fi
-  log "configure + build clang/lld from snippy LLVM (minimal distribution)"
-  rm -rf "$LB" && mkdir -p "$LB" && cd "$LB"
-  # Same portability goal as the GNU host: statically link libstdc++/libgcc into
-  # the clang/lld binaries (LLVM_STATIC_LINK_CXX_STDLIB) on Linux. Not on macOS.
+  log "configure + build upstream LLVM/Clang 22.1.8"
+  rm -rf "$LB"
+  mkdir -p "$LB"
+  cd "$LB"
   local LLVM_STATIC_CXX=OFF
-  [ "$HOSTOS" != macos ] && LLVM_STATIC_CXX=ON
-  cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
+  if [ "$HOSTOS" != macos ]; then
+    LLVM_STATIC_CXX=ON
+  fi
+  cmake -G Ninja "$SRC/llvm/llvm" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DLLVM_STATIC_LINK_CXX_STDLIB="$LLVM_STATIC_CXX" \
     -DPython3_EXECUTABLE="$PY" \
     -DLLVM_TARGETS_TO_BUILD="RISCV" \
-    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+    -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" \
     -DLLVM_DEFAULT_TARGET_TRIPLE="$TUPLE" \
-    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+    -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON \
     -DLLVM_ENABLE_SPHINX=OFF \
+    -DLLVM_ENABLE_DOXYGEN=OFF \
+    -DLLVM_INCLUDE_TESTS=OFF \
+    -DCLANG_INCLUDE_TESTS=OFF \
+    -DLLVM_INCLUDE_EXAMPLES=OFF \
+    -DLLVM_INCLUDE_BENCHMARKS=OFF \
+    -DLLVM_ENABLE_ZLIB=OFF \
+    -DLLVM_ENABLE_ZSTD=OFF \
+    -DLLVM_ENABLE_LIBXML2=OFF \
+    -DLLVM_ENABLE_TERMINFO=OFF \
+    -DLLVM_ENABLE_CURL=OFF \
     -DLLVM_PARALLEL_LINK_JOBS=2 \
     -DLLVM_BINUTILS_INCDIR="$SOURCES/binutils/include" \
     -DLLVM_DISTRIBUTION_COMPONENTS="$LLVM_DIST"
   ninja -j"$NPROC" distribution
   ninja install-distribution-stripped
-  log "clang sanity check"
-  "$PREFIX/bin/clang" --version || true
+  log "LLVM sanity"
+  "$PREFIX/bin/clang" --version
+  "$PREFIX/bin/clangd" --version
+  "$PREFIX/bin/clang-format" --version
+  "$PREFIX/bin/clang-tidy" --version
+  "$PREFIX/bin/lld" --version || true
 }
 
 stage_package(){

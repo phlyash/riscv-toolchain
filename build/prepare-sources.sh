@@ -4,7 +4,6 @@
 #   $SOURCES/binutils   (pinned base + patch/riscv-binutils.patch)
 #   $SOURCES/gcc        (pinned base + patch/riscv-gcc.patch)
 #   $SOURCES/newlib     (pinned base + patch/riscv-newlib.patch)
-#   $SOURCES/llvm-snippy (Syntacore LLVM fork; clang/lld source)
 #
 # Pinned bases come from patch/riscv-gnu-toolchain-from-github.sh (CloudBEAR/NIIET).
 # Robust against flaky/proxied networks: HTTP/1.1 + treeless partial clone + retries.
@@ -15,7 +14,6 @@ set -euo pipefail
 
 SOURCES="${SOURCES:-/sources}"
 PATCHDIR="${PATCHDIR:-$(cd "$(dirname "$0")/../patch" && pwd)}"
-SNIPPY_REF="${SNIPPY_REF:-main}"   # branch/tag of syntacore/snippy for clang/lld
 mkdir -p "$SOURCES"
 
 GIT_ROBUST=(-c http.version=HTTP/1.1 -c http.postBuffer=1048576000 \
@@ -56,19 +54,5 @@ for entry in "${COMPONENTS[@]}"; do
   git -C "$SOURCES/$name" -c user.name=ci -c user.email=ci@local am -3 "$PATCHDIR/$patch"
   echo "  [ok] $(git -C "$SOURCES/$name" log --oneline -1)"
 done
-
-echo "### llvm-snippy (Syntacore LLVM, ref $SNIPPY_REF)"
-if [ -e "$SOURCES/llvm-snippy/.git" ]; then
-  echo "  [skip] already present ($(git -C "$SOURCES/llvm-snippy" log --oneline -1))"
-else
-  for a in 1 2 3 4; do
-    rm -rf "$SOURCES/llvm-snippy"
-    if git "${GIT_ROBUST[@]}" clone --filter=tree:0 --no-tags --depth 1 -b "$SNIPPY_REF" \
-       https://github.com/syntacore/snippy.git "$SOURCES/llvm-snippy"; then break; fi
-    [ "$a" = 4 ] && { echo "  [FAIL] snippy clone"; exit 1; }
-    sleep 5
-  done
-  echo "  [ok] $(git -C "$SOURCES/llvm-snippy" log --oneline -1)"
-fi
 
 echo "ALL SOURCES PREPARED in $SOURCES"

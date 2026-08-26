@@ -67,7 +67,7 @@ stage_clang_cross(){
   if [ ! -x "$NAT/bin/llvm-tblgen" ] || [ ! -x "$NAT/bin/clang-tblgen" ]; then
     log "native tblgen pre-pass for the clang cross -> $NAT"
     rm -rf "$NAT" && mkdir -p "$NAT" && cd "$NAT"
-    cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
+    cmake -G Ninja "$SOURCES/llvm/llvm" \
       -DCMAKE_BUILD_TYPE=Release \
       -DLLVM_ENABLE_PROJECTS="clang" \
       -DLLVM_TARGETS_TO_BUILD="RISCV" \
@@ -77,7 +77,7 @@ stage_clang_cross(){
 
   log "cross-build clang/lld -> $WITH_HOST (host=$PREFIX)"
   rm -rf "$LB" && mkdir -p "$LB" && cd "$LB"
-  cmake -G Ninja "$SOURCES/llvm-snippy/llvm" \
+  cmake -G Ninja "$SOURCES/llvm/llvm" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DCMAKE_SYSTEM_NAME=Windows \
