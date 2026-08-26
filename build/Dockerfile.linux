@@ -1,9 +1,14 @@
 # Portable Linux build environment for the NIIET RISC-V baremetal toolchain.
 #
-# AlmaLinux 8 ships glibc 2.28, so host binaries produced here run on virtually
-# every still-supported Linux distro ("build old, run everywhere"). gcc-toolset-12
-# gives a modern C++17 host compiler while still linking against that old glibc.
-# Also carries MinGW-w64 for the Windows canadian-cross GNU build.
+# manylinux2014 = CentOS 7 / glibc 2.17, so host binaries produced here run on
+# RHEL/CentOS 7 and every newer Linux ("build old, run everywhere"). It already
+# carries devtoolset-10 on PATH (modern C++17 GCC linked against that old glibc)
+# plus a recent cmake + ninja for the LLVM build. The C++ runtime is statically
+# linked by build-baremetal.sh (-static-libstdc++ -static-libgcc) so the binaries
+# don't need a new libstdc++.so either.
+#
+# The Windows canadian-cross runs on the Ubuntu runner directly (Linux-hosted
+# mingw GCC 13), NOT in this image — so no mingw here.
 #
 # Build (context = build/ so the setup script is available to COPY):
 #   docker build -t niiet-rv-linux -f build/Dockerfile.linux build/
@@ -14,10 +19,17 @@
 #     -v rv-work:/work -v rv-prefix:/opt/riscv -v /tmp/rv-out:/out \
 #     niiet-rv-linux bash -c '/src/build/build-baremetal.sh all'
 #
-FROM almalinux:8
+# Base is parameterized so the same Dockerfile builds the x86_64 and the aarch64
+# manylinux2014 images (CI passes --build-arg BASE=...manylinux2014_aarch64 for arm64).
+ARG BASE=quay.io/pypa/manylinux2014_x86_64
+FROM ${BASE}
 
-COPY setup-almalinux8.sh /tmp/setup-almalinux8.sh
-RUN bash /tmp/setup-almalinux8.sh && rm -f /tmp/setup-almalinux8.sh
+COPY setup-manylinux2014.sh /tmp/setup-manylinux2014.sh
+RUN bash /tmp/setup-manylinux2014.sh && rm -f /tmp/setup-manylinux2014.sh
 
-ENV BASH_ENV=/opt/rh/gcc-toolset-12/enable
+# In CI the bind-mounted source/build dirs are owned by the host user, but the
+# container runs as root (uid mismatch) -> git refuses with "dubious ownership".
+# The build runs git inside /src and the source trees, so allow any path.
+RUN git config --system --add safe.directory '*'
+
 SHELL ["/bin/bash", "-c"]

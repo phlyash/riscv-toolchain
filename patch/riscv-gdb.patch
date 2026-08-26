@@ -1,0 +1,46 @@
+From 26d2a48bb09efb52949af1465313ea7b34f0ef89 Mon Sep 17 00:00:00 2001
+From: Dmitry Ryzhov <dmitry.ryzhov@cloudbear.ru>
+Date: Mon, 8 Feb 2021 17:19:04 +0300
+Subject: =?UTF-8?q?Do=20not=20read=200x0=20memory=20on=20"info=20threads"?=
+ =?UTF-8?q?=20and=20other=20"where"=20queries.=0AWhen=20thread=20stays=20i?=
+ =?UTF-8?q?n=20Bear=20reset=5From's=200x10xx=20addresses,=20gdb=20fails=20?=
+ =?UTF-8?q?to=20find=20correct=20frame=20bound=20without=20that=20symbols,?=
+ =?UTF-8?q?=20so=20it=20falls=20back=20to=200x0=20address=20(get=5Fpc=5Ffu?=
+ =?UTF-8?q?nction=5Fstart).=0AAnd=20then=20it=20tries=20to=20scan=20prolog?=
+ =?UTF-8?q?ue=20starting=20from=200x0=20start=5Fpc,=20but=20we=20have=20no?=
+ =?UTF-8?q?=20such=20memory.?=
+
+Change-Id: Iee14b1fa71d365b38dd34f1a93794b66e4067947
+---
+ gdb/riscv-tdep.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/gdb/riscv-tdep.c b/gdb/riscv-tdep.c
+index 3a2891c2c92..4c036d94621 100644
+--- a/gdb/riscv-tdep.c
++++ b/gdb/riscv-tdep.c
+@@ -2215,6 +2215,21 @@ riscv_scan_prologue (struct gdbarch *gdbarch,
+   CORE_ADDR original_end_pc = end_pc;
+   CORE_ADDR end_prologue_addr = 0;
+ 
++  /* When the thread stays in Bear reset_rom's 0x10xx addresses,
++     gdb fails to find the correct frame bound without those symbols,
++     so it falls back to 0x0 address (get_pc_function_start).
++     Here we try to scan the prologue starting from 0x0 start_pc,
++     but we have no such memory.
++     To avoid errors on reading 0x0 memory, skip scanning.  */
++  if (start_pc == 0) {
++    if (riscv_debug_unwinder)
++      gdb_printf
++	(gdb_stdlog,
++	 "Skipping prologue scan for function starting at %s \n",
++	 core_addr_to_string (start_pc));
++    return end_prologue_addr;
++  }
++
+   /* Find an upper limit on the function prologue using the debug
+      information.  If the debug information could not be used to provide
+      that bound, then use an arbitrary large number as the upper bound.  */
+-- 
+2.39.3
+

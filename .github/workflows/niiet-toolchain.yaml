@@ -2,9 +2,9 @@ name: NIIET baremetal toolchain
 
 # Builds the rv32imafdc_zicsr_zifencei baremetal toolchain (GCC + clang/lld from
 # Syntacore's snippy LLVM, reduced rv32 multilib, newlib + newlib-nano) for:
-#   - Linux x86_64   (AlmaLinux 8 / glibc 2.28 -> portable)   [VALIDATED recipe]
-#   - macOS arm64    (native)                                  [experimental: needs CI shakeout]
-#   - Windows x86_64 (mingw canadian-cross, GNU only)          [experimental: clang TODO]
+#   - Linux x86_64/arm64  (manylinux2014 / glibc 2.17 -> portable)  [x86_64 VALIDATED]
+#   - macOS arm64/x86_64  (native)                                  [experimental]
+#   - Windows x86_64 (mingw canadian-cross: gcc+gdb + cross clang)  [experimental]
 #
 # Manual trigger (and on version tags). See build/BUILD-NOTES.md.
 
@@ -17,107 +17,154 @@ permissions:
   contents: read
 
 jobs:
-  linux-x86_64:
-    runs-on: ubuntu-24.04
-    container:
-      image: almalinux:8
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            base: quay.io/pypa/manylinux2014_x86_64
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            base: quay.io/pypa/manylinux2014_aarch64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    # x86_64 is the validated anchor; arm64 is experimental until shaken out.
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
     steps:
-      - name: git for checkout
-        run: dnf -y install git
       - uses: actions/checkout@v6
-      - name: install build deps
-        run: bash build/setup-almalinux8.sh
-      - name: cache patched sources
+      - name: Free disk space
+        run: sudo ./.github/cleanup-rootfs.sh
+      - name: Disk before
+        run: df -h / /mnt
+      - name: Build image
+        run: docker build -t niiet-rv-linux --build-arg BASE=${{ matrix.base }} -f build/Dockerfile.linux build/
+      - name: Cache patched sources
         id: src
         uses: actions/cache@v5
         with:
-          path: /sources
-          key: niiet-src-linux-${{ hashFiles('patch/riscv-*.patch') }}-v1
-      - name: prepare sources
+          path: /mnt/sources
+          key: niiet-src-linux-${{ matrix.arch }}-${{ hashFiles('patch/riscv-*.patch') }}-v1
+      - name: Prepare sources
         if: steps.src.outputs.cache-hit != 'true'
-        run: SOURCES=/sources bash build/prepare-sources.sh
-      - name: build (gcc + clang + package)
         run: |
-          source /opt/rh/gcc-toolset-12/enable
-          SRC="$GITHUB_WORKSPACE" SOURCES=/sources WORK=/work \
-          PREFIX=/opt/riscv OUT="$GITHUB_WORKSPACE/out" \
-            bash build/build-baremetal.sh all
+          sudo mkdir -p /mnt/sources && sudo chown "$USER" /mnt/sources
+          SOURCES=/mnt/sources bash build/prepare-sources.sh
+      - name: Build (gcc + clang + package)
+        run: |
+          sudo mkdir -p /mnt/work /mnt/prefix /mnt/out
+          sudo chown "$USER" /mnt/work /mnt/prefix /mnt/out
+          docker run --rm \
+            -v "$PWD":/src -v /mnt/sources:/sources \
+            -v /mnt/work:/work -v /mnt/prefix:/opt/riscv -v /mnt/out:/out \
+            niiet-rv-linux \
+            bash -c '/src/build/build-baremetal.sh all && PREFIX=/opt/riscv bash /src/build/verify-multilib.sh'
+      - name: Disk after
+        if: always()
+        run: df -h / /mnt
       - uses: actions/upload-artifact@v7
         with:
-          name: riscv32-imafdc-elf-x86_64-linux-gcc-clang
-          path: out/*.tar.xz
+          name: riscv32-imafdc-elf-${{ matrix.arch }}-linux-gcc-clang
+          path: /mnt/out/*.tar.xz
           compression-level: 0
 
-  macos-arm64:
-    runs-on: macos-14
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
     continue-on-error: true        # experimental until shaken out on the runner
     steps:
       - uses: actions/checkout@v6
-      - name: install build deps
+      - name: Install build deps
+        # 'flock' is required by the toolchain Makefile (sysroot install lock) and is
+        # absent on macOS; GNU bison/sed/make/gawk must also precede the system ones.
         run: |
-          brew install bison gawk gnu-sed make gmp mpfr libmpc isl expat \
+          brew install flock bison gawk gnu-sed make gmp mpfr libmpc isl expat \
                        ninja cmake autoconf automake libtool texinfo python@3.11
-      - name: cache patched sources
+      - name: Cache patched sources
         id: src
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/sources
-          key: niiet-src-macos-${{ hashFiles('patch/riscv-*.patch') }}-v1
-      - name: prepare sources
+          key: niiet-src-${{ matrix.arch }}-macos-${{ hashFiles('patch/riscv-*.patch') }}-v1
+      - name: Prepare sources
         if: steps.src.outputs.cache-hit != 'true'
         run: SOURCES="$GITHUB_WORKSPACE/sources" bash build/prepare-sources.sh
-      - name: build (gcc + clang + package)
+      - name: Build (gcc + clang + package)
         # NOTE: macOS source trees may need a case-sensitive volume (see macos-build.md).
-        # GNU bison/sed/make/gawk must precede system ones on PATH.
+        # brew --prefix is /opt/homebrew on arm64 and /usr/local on Intel.
         run: |
-          B=/opt/homebrew/opt
-          export PATH="$B/bison/bin:$B/gnu-sed/libexec/gnubin:$B/gawk/libexec/gnubin:$B/make/libexec/gnubin:$PATH"
+          B="$(brew --prefix)/opt"
+          export PATH="$B/flock/bin:$B/bison/bin:$B/gnu-sed/libexec/gnubin:$B/gawk/libexec/gnubin:$B/make/libexec/gnubin:$PATH"
+          # Homebrew installs gmp/mpfr/mpc/isl under $(brew --prefix)/opt; configure
+          # (gdb/gcc) doesn't search there by default.
+          export LDFLAGS="-L$B/gmp/lib -L$B/mpfr/lib -L$B/libmpc/lib -L$B/isl/lib"
+          export CPPFLAGS="-I$B/gmp/include -I$B/mpfr/include -I$B/libmpc/include -I$B/isl/include"
           SRC="$GITHUB_WORKSPACE" SOURCES="$GITHUB_WORKSPACE/sources" \
           WORK="$GITHUB_WORKSPACE/work" PREFIX="$GITHUB_WORKSPACE/install/riscv" \
           OUT="$GITHUB_WORKSPACE/out" \
             bash build/build-baremetal.sh all
       - uses: actions/upload-artifact@v7
         with:
-          name: riscv32-imafdc-elf-arm64-macos-gcc-clang
+          name: riscv32-imafdc-elf-${{ matrix.arch }}-macos-gcc-clang
           path: out/*.tar.xz
           compression-level: 0
 
   windows-x86_64:
-    # Canadian cross from the Linux container: GNU toolchain (gcc/binutils/newlib)
-    # hosted on Windows. clang-for-Windows cross is not wired yet (build-baremetal.sh
-    # skips clang when WITH_HOST is set) — that's a follow-up (mingw toolchain file
-    # + native llvm-tblgen). This job currently ships GCC only.
+    # Canadian cross to Windows: GNU toolchain (gcc/binutils/newlib/gdb) hosted on
+    # Windows. Built directly on the Ubuntu runner (NOT the old-glibc container — that
+    # only matters for Linux host binaries; Windows output is PE). Uses Ubuntu's
+    # Linux-hosted mingw-w64 GCC 13 (EPEL 8's mingw is too old to compile gdb 14).
+    # gdb's host gmp/mpfr/expat are cross-built into the mingw sysroot
+    # (build/prepare-mingw-deps.sh). clang-for-Windows is a separate follow-up.
     runs-on: ubuntu-24.04
     continue-on-error: true        # experimental
-    container:
-      image: almalinux:8
     steps:
-      - name: git for checkout
-        run: dnf -y install git
       - uses: actions/checkout@v6
-      - name: install build deps
-        run: bash build/setup-almalinux8.sh
-      - name: cache patched sources
+      - name: Free disk space
+        run: sudo ./.github/cleanup-rootfs.sh
+      - name: Install build deps + Linux-hosted mingw-w64 (GCC 13, posix threads)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
+            build-essential autoconf automake libtool texinfo bison flex gawk gettext \
+            libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev \
+            cmake ninja-build python3 curl xz-utils file
+          # gdb uses std::thread -> require the posix-threads mingw variant
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+      - name: Cache patched sources
         id: src
         uses: actions/cache@v5
         with:
-          path: /sources
+          path: /mnt/sources
           key: niiet-src-linux-${{ hashFiles('patch/riscv-*.patch') }}-v1
-      - name: prepare sources
+      - name: Prepare sources
         if: steps.src.outputs.cache-hit != 'true'
-        run: SOURCES=/sources bash build/prepare-sources.sh
-      - name: build (gcc canadian-cross to mingw)
         run: |
-          source /opt/rh/gcc-toolset-12/enable
-          SRC="$GITHUB_WORKSPACE" SOURCES=/sources WORK=/work \
-          PREFIX=/opt/riscv-win OUT="$GITHUB_WORKSPACE/out" \
-          WITH_HOST=x86_64-w64-mingw32 \
+          sudo mkdir -p /mnt/sources && sudo chown "$USER" /mnt/sources
+          SOURCES=/mnt/sources bash build/prepare-sources.sh
+      - name: Build (gcc + gdb canadian-cross + clang cross to mingw)
+        run: |
+          sudo mkdir -p /mnt/work /mnt/prefix-win /mnt/out
+          sudo chown "$USER" /mnt/work /mnt/prefix-win /mnt/out
+          SRC="$PWD" SOURCES=/mnt/sources WORK=/mnt/work \
+          PREFIX=/mnt/prefix-win OUT=/mnt/out WITH_HOST=x86_64-w64-mingw32 \
             bash build/build-baremetal.sh gcc
-          SRC="$GITHUB_WORKSPACE" PREFIX=/opt/riscv-win OUT="$GITHUB_WORKSPACE/out" \
-          WITH_HOST=x86_64-w64-mingw32 \
+          SRC="$PWD" SOURCES=/mnt/sources WORK=/mnt/work \
+          PREFIX=/mnt/prefix-win OUT=/mnt/out WITH_HOST=x86_64-w64-mingw32 \
+            bash build/build-baremetal.sh clang
+          SRC="$PWD" PREFIX=/mnt/prefix-win OUT=/mnt/out WITH_HOST=x86_64-w64-mingw32 \
             bash build/build-baremetal.sh package
       - uses: actions/upload-artifact@v7
         with:
-          name: riscv32-imafdc-elf-x86_64-windows-gcc
-          path: out/*.tar.xz
+          name: riscv32-imafdc-elf-x86_64-windows-gcc-clang
+          path: /mnt/out/*.tar.xz
           compression-level: 0

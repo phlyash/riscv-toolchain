@@ -1,7 +1,9 @@
 # NIIET RISC-V baremetal toolchain — build notes
 
 Target: **baremetal (newlib)**, `rv32imafdc_zicsr_zifencei`, GCC **and** clang, as small as
-possible, for hosts **Linux x86_64 / Windows x86_64 / macOS arm64**.
+possible, for hosts **Linux x86_64/arm64 · macOS arm64/x86_64 · Windows x86_64** (5 symmetric
+artifacts, each gcc + clang/lld + gdb). Windows arm64 is dropped — no stable
+`aarch64-w64-mingw32` GCC exists to cross-build with.
 
 ## Source bases (pinned CloudBEAR commits, NOT the gcc-16 submodule)
 
@@ -19,16 +21,25 @@ clang comes from **Syntacore's LLVM fork** `https://github.com/syntacore/snippy`
 (full llvm-project monorepo). We build `llvm;clang;lld` + baremetal runtimes from it;
 we do NOT build the `llvm-snippy` tool / `snippy_basic` preset.
 
-## Multilib (reduced rv32 imafdc subset chain)
+## Multilib (reduced rv32 subset chain, bare canonical naming)
 
-Passed as `--with-multilib-generator=` (implies `--enable-multilib`, bare-metal only):
+Passed as `--with-multilib-generator=` together with `--with-isa-spec=20191213`
+(implies `--enable-multilib`, bare-metal only):
 
 ```
-rv32i_zicsr_zifencei-ilp32--;rv32im_zicsr_zifencei-ilp32--;rv32imc_zicsr_zifencei-ilp32--;rv32imac_zicsr_zifencei-ilp32--;rv32imafc_zicsr_zifencei-ilp32f--;rv32imafdc_zicsr_zifencei-ilp32d--
+rv32i-ilp32--;rv32im-ilp32--;rv32imc-ilp32--;rv32imac-ilp32--;rv32imafc-ilp32f--;rv32imafdc-ilp32d--;rv32imcp-ilp32--;rv32imafdcp-ilp32d--
 ```
 
-(6 libs: i, im, imc, imac → ilp32; imafc → ilp32f; imafdc → ilp32d. newlib-nano built
-automatically alongside full newlib.)
+8 libs. Arch strings are **bare** (no `_zicsr_zifencei` suffix) so GCC's multilib
+directory names equal clang's normalized `-march` keys — both compilers select the
+same `.a`. The last two add the **P** (DSP/packed-SIMD) extension: `rv32imcp/ilp32`
+(integer DSP, no FPU) and `rv32imafdcp/ilp32d` (full float + DSP); on GCC `p`
+expands to `zmmul,zbpbo,zpn,zpsfoperand` (v0.9.11) via the CloudBEAR patch, and
+snippy clang accepts the same march. newlib-nano is built per variant. The Linux
+CI job runs `build/verify-multilib.sh` to hard-fail if clang and gcc ever disagree
+on the selected multilib, if clang can't parse an `-march`, or if a variant won't
+link. NOTE: installed dir names changed from `rv32imc_zicsr_zifencei/` to
+`rv32imc/` — update anything that hardcoded the old paths.
 
 ## Two-pass constraint
 
@@ -53,15 +64,25 @@ Strategy (to be validated empirically, in order):
 
 ## Per-host
 
-- **Linux**: `build/Dockerfile.linux` (AlmaLinux 8 / glibc 2.28 + gcc-toolset-12) → portable.
-- **Windows**: canadian cross from the same container, `--with-host=x86_64-w64-mingw32`
-  (GNU side). clang-for-Windows needs extra cmake (`-DLLVM_HOST_TRIPLE`, mingw C++ rt).
-- **macOS arm64**: native on the Mac; `source macos.zsh` first (homebrew bison/gawk/gsed/
-  gmake, gmp/mpfr/mpc), build on a case-sensitive volume.
+- **Linux x86_64 + arm64**: `build/Dockerfile.linux` (manylinux2014 / CentOS 7 / glibc 2.17
+  + devtoolset-10), base parameterized via `ARG BASE` (CI passes the `_x86_64` or `_aarch64`
+  image; arm64 runs natively on an arm runner) → runs on RHEL/CentOS 7 and newer. C++ runtime
+  statically linked (-static-libstdc++ -static-libgcc in build-baremetal.sh) so no
+  GLIBCXX/CXXABI deps either.
+- **Windows x86_64**: canadian cross on the Ubuntu runner (Linux-hosted mingw GCC 13),
+  `--with-host=x86_64-w64-mingw32` for gcc+gdb, **plus a cross-built clang/lld** —
+  `stage_clang_cross` does a native `*-tblgen` pre-pass then a mingw cross configure
+  (`CMAKE_SYSTEM_NAME=Windows`, `LLVM_NATIVE_TOOL_DIR`, fully static host link
+  `-static -static-libgcc -static-libstdc++`, optional host deps ZLIB/ZSTD/LIBXML2/TERMINFO
+  OFF). All `.exe`s install into the same `$PREFIX`.
+- **macOS arm64 + x86_64**: native on the Mac runners (`macos-14` / `macos-13`); homebrew
+  bison/gawk/gsed/gmake + gmp/mpfr/mpc, prefix auto-detected via `$(brew --prefix)`
+  (`/opt/homebrew` on arm64, `/usr/local` on Intel). Source trees may need a case-sensitive
+  volume.
 
 ## Scripts (in build/)
 
-- `setup-almalinux8.sh` — install build deps on AlmaLinux 8 (shared by Dockerfile + CI).
+- `setup-manylinux2014.sh` — install build deps on the manylinux2014 (CentOS 7) base.
 - `Dockerfile.linux` — the portable build image. Build with **context = build/**:
   `docker build -t niiet-rv-linux -f build/Dockerfile.linux build/`
 - `prepare-sources.sh` — clone pinned bases + apply patches + clone snippy into `$SOURCES`.
@@ -79,16 +100,19 @@ docker run --rm -v "$PWD":/src -v /tmp/rv-patch-verify:/sources \
 ## CI: `.github/workflows/niiet-toolchain.yaml`
 
 Manual (`workflow_dispatch`) + version tags. Jobs:
-- **linux-x86_64** — AlmaLinux 8 container on an x86_64 runner. VALIDATED recipe; the real
-  portable x86_64 deliverable. Sources cached by patch-file hash.
-- **macos-arm64** — native on `macos-14`. Experimental (`continue-on-error`): needs a real
-  CI run to shake out (PATH for GNU tools; possible case-sensitive-FS requirement).
-- **windows-x86_64** — mingw canadian-cross from the container, **GCC only** for now
-  (`build-baremetal.sh` skips clang when `WITH_HOST` is set). Experimental.
+- **linux** (matrix ×2: `x86_64` on `ubuntu-24.04`, `arm64` on `ubuntu-24.04-arm`) —
+  manylinux2014 (glibc 2.17) container, native per arch. x86_64 is the validated portable
+  anchor (runs on CentOS/RHEL 7+); arm64 is `continue-on-error`. Sources cached per arch.
+- **macos** (matrix ×2: `arm64` on `macos-14`, `x86_64` on `macos-13`) — native.
+  Experimental (`continue-on-error`): PATH for GNU tools; possible case-sensitive-FS need.
+- **windows-x86_64** — mingw canadian-cross on the Ubuntu runner: **gcc + gdb + clang/lld**.
+  A canadian cross needs a runnable build->target gcc to compile target libgcc/libstdc++ +
+  dump specs (the host cc1 is a Windows .exe), so `stage_gcc` does a **native pre-pass** into
+  `$WORK/native-toolchain` first on PATH before the canadian pass. clang is cross-built by
+  `stage_clang_cross` (native tblgen pre-pass + mingw cross configure). Experimental.
 
 ### Remaining work
-- clang-for-Windows cross (mingw toolchain file + native `llvm-tblgen`, `LLVM_NATIVE_TOOL_DIR`).
-- Validate/iterate macOS and Windows jobs on actual runners.
+- Validate/iterate the new arm64 Linux, Intel macOS, and Windows-clang jobs on actual runners.
 
 ## Caveat
 
