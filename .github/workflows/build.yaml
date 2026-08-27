@@ -10,6 +10,13 @@ on:
       - master
 
 jobs:
+  test-host-link-config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test host runtime link configuration
+        run: bash build/test-build-config.sh all
+
   build:
     uses: ./.github/workflows/build-reusable.yaml
     with:
@@ -32,4 +39,3 @@ jobs:
       os: '["ubuntu-24.04"]'
       mode: '["newlib","linux"]'
       target: '["rv64gc-lp64d"]'
-

@@ -55,6 +55,7 @@ Strategy (to be validated empirically, in order):
 ## Smallness levers (apply all)
 
 - `--with-languages=c,c++` (drop fortran/go/…)
+- `--disable-libcc1` (drop the always-shared, optional GDB `compile` bridge)
 - newlib-nano (automatic) — link user code with `--specs=nano.specs`
 - `--enable-strip` (strips host binaries)
 - LLVM: `-DLLVM_TARGETS_TO_BUILD=RISCV -DLLVM_INSTALL_TOOLCHAIN_ONLY=On`,
@@ -67,7 +68,7 @@ Strategy (to be validated empirically, in order):
 - **Linux x86_64 + arm64**: `build/Dockerfile.linux` (manylinux2014 / CentOS 7 / glibc 2.17
   + devtoolset-10), base parameterized via `ARG BASE` (CI passes the `_x86_64` or `_aarch64`
   image; arm64 runs natively on an arm runner) → runs on RHEL/CentOS 7 and newer. C++ runtime
-  statically linked (-static-libstdc++ -static-libgcc in build-baremetal.sh) so no
+  statically linked (`-static-libstdc++ -static-libgcc` in `build-baremetal.sh`) so no
   GLIBCXX/CXXABI deps either.
 - **Windows x86_64**: canadian cross on the Ubuntu runner (Linux-hosted mingw GCC 13),
   `--with-host=x86_64-w64-mingw32` for gcc+gdb, **plus a cross-built clang/lld** —
@@ -88,6 +89,8 @@ Strategy (to be validated empirically, in order):
 - `prepare-sources.sh` — clone pinned bases + apply patches + clone snippy into `$SOURCES`.
 - `build-baremetal.sh {gcc|clang|package|all}` — env-driven (SRC, SOURCES, WORK, PREFIX,
   OUT, WITH_HOST); same script local + CI.
+- `test-build-config.sh [case|all]` — fast regression tests for host static-link flags;
+  slow build tools are replaced with local argument recorders.
 
 Local run (Apple Silicon → produces an **arm64**-hosted toolchain, validation only):
 ```
