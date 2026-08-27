@@ -122,11 +122,40 @@ stage_gcc() {
 
         DEPS="$(HOST="$WITH_HOST" WORK="$WORK" bash "$SRC/build/prepare-mingw-deps.sh" | tail -1)"
 
-        export CPPFLAGS="-I$DEPS/include -I$DEPS/include/ncursesw${BASE_CPPFLAGS:+ $BASE_CPPFLAGS}"
-        export LDFLAGS="-static -static-libgcc -static-libstdc++ -L$DEPS/lib${BASE_LDFLAGS:+ $BASE_LDFLAGS}"
+        log "checking static MinGW ncurses"
+
+        cat > "$WORK/test-curses-win.c" <<'EOF'
+#include <curses.h>
+int main(void) {
+    initscr();
+    endwin();
+    return 0;
+}
+EOF
+
+        "${WITH_HOST}-gcc" -DNCURSES_STATIC "$WORK/test-curses-win.c" \
+            -static -static-libgcc -lncursesw \
+            -o "$WORK/test-curses-win.exe"
+
+        "${WITH_HOST}-objdump" -p "$WORK/test-curses-win.exe" |
+            sed -n 's/^[[:space:]]*DLL Name: /  /p'
+
+        rm -f "$WORK/test-curses-win.c" "$WORK/test-curses-win.exe"
+
+        # Do NOT put $DEPS/include into global CPPFLAGS:
+        # GCC build generators are native Linux programs and would otherwise
+        # consume MinGW headers.
+        #
+        # NCURSES_STATIC is safe for native build tools and is required so
+        # MinGW ncurses headers do not emit __imp_* DLL references.
+        export CPPFLAGS="-DNCURSES_STATIC${BASE_CPPFLAGS:+ $BASE_CPPFLAGS}"
+
+        # Do NOT add -L$DEPS/lib globally either. $DEPS is the MinGW sysroot
+        # and x86_64-w64-mingw32-gcc already searches its lib directory.
+        export LDFLAGS="-static -static-libgcc -static-libstdc++${BASE_LDFLAGS:+ $BASE_LDFLAGS}"
 
         GCC_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --with-mpc=$DEPS"
-        BINUTILS_EXTRA="--with-expat=$DEPS"
+        BINUTILS_EXTRA="--with-expat=$DEPS --without-zstd"
 
         GDB_EXTRA="--enable-tui --with-curses \
 --enable-static --disable-shared --with-static-standard-libraries \
@@ -159,7 +188,7 @@ stage_gcc() {
     fi
 
     GCC_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --with-mpc=$DEPS --with-isl=$DEPS"
-    BINUTILS_EXTRA="--with-expat=$DEPS"
+    BINUTILS_EXTRA="--with-expat=$DEPS --without-zstd"
 
     GDB_EXTRA="--enable-tui --with-curses \
 --enable-static --disable-shared \
@@ -175,15 +204,19 @@ stage_gcc() {
 
     if [ "$HOSTOS" = macos ]; then
         log "checking macOS system curses"
+
         cat > "$WORK/test-curses.c" <<'EOF'
 #include <curses.h>
 int main(void) { return 0; }
 EOF
+
         cc "$WORK/test-curses.c" -lcurses -o "$WORK/test-curses"
         rm -f "$WORK/test-curses.c" "$WORK/test-curses"
     fi
 
     log "native static deps: $DEPS"
+    log "CPPFLAGS=$CPPFLAGS"
+    log "LDFLAGS=$LDFLAGS"
 
     gcc_build_into "$PREFIX" "" "$BASE_CPPFLAGS" "$BASE_LDFLAGS"
 
