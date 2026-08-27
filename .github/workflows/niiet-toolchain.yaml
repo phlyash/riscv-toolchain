@@ -11,29 +11,28 @@ permissions:
 
 env:
   LLVM_COMMIT: ca7933e47d3a3451d81e72ac174dcb5aa28b59d1
+
 jobs:
   linux-x86_64:
     runs-on: ubuntu-24.04
+
     steps:
       - uses: actions/checkout@v6
+
       - name: Checkout pinned LLVM 22.1.8
         shell: bash
         run: |
-          git submodule update \
-            --init \
-            --depth 1 \
-            llvm
-          actual="$(
-            git -C llvm rev-parse HEAD
-          )"
+          git submodule update --init --depth 1 llvm
+          actual="$(git -C llvm rev-parse HEAD)"
           echo "LLVM commit: $actual"
-          test \
-            "$actual" = \
-            "$LLVM_COMMIT"
+          test "$actual" = "$LLVM_COMMIT"
+
       - name: Free disk space
         run: sudo ./.github/cleanup-rootfs.sh
+
       - name: Disk before
         run: df -h / /mnt
+
       - name: Build image
         run: |
           docker build \
@@ -41,6 +40,7 @@ jobs:
             --build-arg BASE=quay.io/pypa/manylinux2014_x86_64 \
             -f build/Dockerfile.linux \
             build/
+
       - name: Cache patched GNU sources
         id: src
         uses: actions/cache@v5
@@ -53,67 +53,110 @@ jobs:
                 'build/prepare-sources.sh'
               )
             }}
+
       - name: Prepare patched GNU sources
         if: steps.src.outputs.cache-hit != 'true'
         run: |
           sudo mkdir -p /mnt/sources
-          sudo chown \
-            "$USER" \
-            /mnt/sources
-          SOURCES=/mnt/sources \
-            bash build/prepare-sources.sh
-      - name: Build GCC + LLVM + package and verify multilibs
+          sudo chown "$USER" /mnt/sources
+          SOURCES=/mnt/sources bash build/prepare-sources.sh
+
+      - name: Initialize build directories
         run: |
-          sudo mkdir -p \
-            /mnt/work \
-            /mnt/prefix \
-            /mnt/out
-          sudo chown \
-            "$USER" \
-            /mnt/work \
-            /mnt/prefix \
-            /mnt/out
-          docker run \
-            --rm \
+          sudo mkdir -p /mnt/work /mnt/prefix /mnt/out
+          sudo chown "$USER" /mnt/work /mnt/prefix /mnt/out
+
+      - name: Build GCC + newlib + GDB
+        run: |
+          docker run --rm \
             -v "$PWD":/src \
             -v /mnt/sources:/sources \
             -v /mnt/work:/work \
             -v /mnt/prefix:/opt/riscv \
             -v /mnt/out:/out \
             niiet-rv-linux \
-            bash -c '
-              set -e
-              /src/build/build-baremetal.sh all
-              PREFIX=/opt/riscv \
-                bash /src/build/verify-multilib.sh
-            '
+            bash -c 'set -euo pipefail; /src/build/build-baremetal.sh gcc'
+
+      - name: Build upstream LLVM + Clang tools
+        run: |
+          docker run --rm \
+            -v "$PWD":/src \
+            -v /mnt/sources:/sources \
+            -v /mnt/work:/work \
+            -v /mnt/prefix:/opt/riscv \
+            -v /mnt/out:/out \
+            niiet-rv-linux \
+            bash -c 'set -euo pipefail; /src/build/build-baremetal.sh clang'
+
+      - name: Verify multilibs
+        run: |
+          docker run --rm \
+            -v "$PWD":/src \
+            -v /mnt/prefix:/opt/riscv \
+            niiet-rv-linux \
+            bash -c 'set -euo pipefail; PREFIX=/opt/riscv bash /src/build/verify-multilib.sh'
+
+      - name: Verify Linux runtime dependencies
+        run: |
+          docker run --rm \
+            -v "$PWD":/src \
+            -v /mnt/prefix:/opt/riscv \
+            niiet-rv-linux \
+            bash -c 'set -euo pipefail; PREFIX=/opt/riscv bash /src/build/check-host-runtime.sh'
+
+      - name: Package Linux SDK
+        run: |
+          docker run --rm \
+            -v "$PWD":/src \
+            -v /mnt/prefix:/opt/riscv \
+            -v /mnt/out:/out \
+            niiet-rv-linux \
+            bash -c 'set -euo pipefail; command -v zip; /src/build/build-baremetal.sh package'
+
+      - name: Verify Linux archives
+        run: |
+          test -f /mnt/out/niiet-riscv-toolchain-linux-x86_64.tar.gz
+          test -f /mnt/out/niiet-riscv-toolchain-linux-x86_64.zip
+
+          tar -tzf /mnt/out/niiet-riscv-toolchain-linux-x86_64.tar.gz | grep -q '^\./bin/'
+          unzip -Z1 /mnt/out/niiet-riscv-toolchain-linux-x86_64.zip | grep -q '^bin/'
+
+          if tar -tzf /mnt/out/niiet-riscv-toolchain-linux-x86_64.tar.gz | grep -q '^\./niiet-riscv-toolchain-'; then
+            echo "ERROR: tar.gz contains an extra root directory"
+            exit 1
+          fi
+
+          if unzip -Z1 /mnt/out/niiet-riscv-toolchain-linux-x86_64.zip | grep -q '^niiet-riscv-toolchain-'; then
+            echo "ERROR: zip contains an extra root directory"
+            exit 1
+          fi
+
       - name: Disk after
         if: always()
         run: df -h / /mnt
+
       - uses: actions/upload-artifact@v7
         with:
-          name: >-
-            riscv32-imafdc-elf-x86_64-linux-gcc-clang
-          path: /mnt/out/*.tar.xz
+          name: niiet-riscv-toolchain-linux-x86_64
+          path: |
+            /mnt/out/niiet-riscv-toolchain-linux-x86_64.tar.gz
+            /mnt/out/niiet-riscv-toolchain-linux-x86_64.zip
           compression-level: 0
-  macos-arm64:
+
+  macos-aarch64:
     runs-on: macos-14
+
     steps:
       - uses: actions/checkout@v6
+
       - name: Checkout pinned LLVM 22.1.8
         shell: bash
         run: |
-          git submodule update \
-            --init \
-            --depth 1 \
-            llvm
-          actual="$(
-            git -C llvm rev-parse HEAD
-          )"
+          git submodule update --init --depth 1 llvm
+          actual="$(git -C llvm rev-parse HEAD)"
           echo "LLVM commit: $actual"
-          test \
-            "$actual" = \
-            "$LLVM_COMMIT"
+          test "$actual" = "$LLVM_COMMIT"
+
       - name: Install build dependencies
         run: |
           brew install \
@@ -122,11 +165,6 @@ jobs:
             gawk \
             gnu-sed \
             make \
-            gmp \
-            mpfr \
-            libmpc \
-            isl \
-            expat \
             ninja \
             cmake \
             autoconf \
@@ -134,69 +172,114 @@ jobs:
             libtool \
             texinfo \
             python@3.11
+
       - name: Cache patched GNU sources
         id: src
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/sources
           key: >-
-            niiet-src-arm64-macos-${{
+            niiet-src-macos-aarch64-${{
               hashFiles(
                 'patch/riscv-*.patch',
                 'build/prepare-sources.sh'
               )
             }}
+
       - name: Prepare patched GNU sources
         if: steps.src.outputs.cache-hit != 'true'
         run: |
-          SOURCES="$GITHUB_WORKSPACE/sources" \
-            bash build/prepare-sources.sh
-      - name: Build GCC + LLVM + package and verify multilibs
-        run: |
-          B="$(
-            brew --prefix
-          )/opt"
-          export PATH="$B/flock/bin:$B/bison/bin:$B/gnu-sed/libexec/gnubin:$B/gawk/libexec/gnubin:$B/make/libexec/gnubin:$PATH"
-          export LDFLAGS="-L$B/gmp/lib -L$B/mpfr/lib -L$B/libmpc/lib -L$B/isl/lib"
-          export CPPFLAGS="-I$B/gmp/include -I$B/mpfr/include -I$B/libmpc/include -I$B/isl/include"
+          SOURCES="$GITHUB_WORKSPACE/sources" bash build/prepare-sources.sh
 
+      - name: Configure build environment
+        run: |
+          B="$(brew --prefix)/opt"
+          echo "$B/flock/bin" >> "$GITHUB_PATH"
+          echo "$B/bison/bin" >> "$GITHUB_PATH"
+          echo "$B/gnu-sed/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$B/gawk/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$B/make/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Build GCC + newlib + GDB
+        run: |
           SRC="$GITHUB_WORKSPACE" \
           SOURCES="$GITHUB_WORKSPACE/sources" \
           WORK="$GITHUB_WORKSPACE/work" \
           PREFIX="$GITHUB_WORKSPACE/install/riscv" \
           OUT="$GITHUB_WORKSPACE/out" \
-            bash build/build-baremetal.sh all
+            bash build/build-baremetal.sh gcc
 
+      - name: Build upstream LLVM + Clang tools
+        run: |
+          SRC="$GITHUB_WORKSPACE" \
+          SOURCES="$GITHUB_WORKSPACE/sources" \
+          WORK="$GITHUB_WORKSPACE/work" \
+          PREFIX="$GITHUB_WORKSPACE/install/riscv" \
+          OUT="$GITHUB_WORKSPACE/out" \
+            bash build/build-baremetal.sh clang
+
+      - name: Verify multilibs
+        run: |
           PREFIX="$GITHUB_WORKSPACE/install/riscv" \
             bash build/verify-multilib.sh
+
+      - name: Verify macOS runtime dependencies
+        run: |
+          PREFIX="$GITHUB_WORKSPACE/install/riscv" \
+            bash build/check-host-runtime.sh
+
+      - name: Package macOS SDK
+        run: |
+          command -v zip
+
+          SRC="$GITHUB_WORKSPACE" \
+          PREFIX="$GITHUB_WORKSPACE/install/riscv" \
+          OUT="$GITHUB_WORKSPACE/out" \
+            bash build/build-baremetal.sh package
+
+      - name: Verify macOS archives
+        run: |
+          test -f out/niiet-riscv-toolchain-macos-aarch64.tar.gz
+          test -f out/niiet-riscv-toolchain-macos-aarch64.zip
+
+          tar -tzf out/niiet-riscv-toolchain-macos-aarch64.tar.gz | grep -q '^\./bin/'
+          unzip -Z1 out/niiet-riscv-toolchain-macos-aarch64.zip | grep -q '^bin/'
+
+          if tar -tzf out/niiet-riscv-toolchain-macos-aarch64.tar.gz | grep -q '^\./niiet-riscv-toolchain-'; then
+            echo "ERROR: tar.gz contains an extra root directory"
+            exit 1
+          fi
+
+          if unzip -Z1 out/niiet-riscv-toolchain-macos-aarch64.zip | grep -q '^niiet-riscv-toolchain-'; then
+            echo "ERROR: zip contains an extra root directory"
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v7
         with:
-          name: >-
-            riscv32-imafdc-elf-arm64-macos-gcc-clang
-          path: out/*.tar.xz
+          name: niiet-riscv-toolchain-macos-aarch64
+          path: |
+            out/niiet-riscv-toolchain-macos-aarch64.tar.gz
+            out/niiet-riscv-toolchain-macos-aarch64.zip
           compression-level: 0
 
   windows-x86_64:
     runs-on: ubuntu-24.04
+
     steps:
       - uses: actions/checkout@v6
+
       - name: Checkout pinned LLVM 22.1.8
         shell: bash
         run: |
-          git submodule update \
-            --init \
-            --depth 1 \
-            llvm
-          actual="$(
-            git -C llvm rev-parse HEAD
-          )"
+          git submodule update --init --depth 1 llvm
+          actual="$(git -C llvm rev-parse HEAD)"
           echo "LLVM commit: $actual"
-          test \
-            "$actual" = \
-            "$LLVM_COMMIT"
+          test "$actual" = "$LLVM_COMMIT"
+
       - name: Free disk space
-        run: |
-          sudo ./.github/cleanup-rootfs.sh
+        run: sudo ./.github/cleanup-rootfs.sh
+
       - name: Install build deps + Linux-hosted mingw-w64
         run: |
           sudo apt-get update
@@ -221,15 +304,19 @@ jobs:
             python3 \
             curl \
             xz-utils \
-            file
+            file \
+            ncurses-bin \
+            zip \
+            unzip
+
           sudo update-alternatives \
-            --set \
-            x86_64-w64-mingw32-gcc \
+            --set x86_64-w64-mingw32-gcc \
             /usr/bin/x86_64-w64-mingw32-gcc-posix
+
           sudo update-alternatives \
-            --set \
-            x86_64-w64-mingw32-g++ \
+            --set x86_64-w64-mingw32-g++ \
             /usr/bin/x86_64-w64-mingw32-g++-posix
+
       - name: Cache patched GNU sources
         id: src
         uses: actions/cache@v5
@@ -240,28 +327,23 @@ jobs:
               hashFiles(
                 'patch/riscv-*.patch',
                 'build/prepare-sources.sh'
-                 )
-               }}
+              )
+            }}
+
       - name: Prepare patched GNU sources
         if: steps.src.outputs.cache-hit != 'true'
         run: |
           sudo mkdir -p /mnt/sources
-          sudo chown \
-            "$USER" \
-            /mnt/sources
-          SOURCES=/mnt/sources \
-            bash build/prepare-sources.sh
+          sudo chown "$USER" /mnt/sources
+          SOURCES=/mnt/sources bash build/prepare-sources.sh
+
+      - name: Initialize build directories
+        run: |
+          sudo mkdir -p /mnt/work /mnt/prefix-win /mnt/out
+          sudo chown "$USER" /mnt/work /mnt/prefix-win /mnt/out
+
       - name: Build GCC + GDB Canadian-cross
         run: |
-          sudo mkdir -p \
-            /mnt/work \
-            /mnt/prefix-win \
-            /mnt/out
-          sudo chown \
-            "$USER" \
-            /mnt/work \
-            /mnt/prefix-win \
-            /mnt/out
           SRC="$PWD" \
           SOURCES=/mnt/sources \
           WORK=/mnt/work \
@@ -269,7 +351,8 @@ jobs:
           OUT=/mnt/out \
           WITH_HOST=x86_64-w64-mingw32 \
             bash build/build-baremetal.sh gcc
-      - name: Build upstream LLVM/Clang Canadian-cross
+
+      - name: Build upstream LLVM + Clang Canadian-cross
         run: |
           SRC="$PWD" \
           SOURCES=/mnt/sources \
@@ -278,6 +361,37 @@ jobs:
           OUT=/mnt/out \
           WITH_HOST=x86_64-w64-mingw32 \
             bash build/build-baremetal.sh clang
+
+      - name: Inspect Windows host tools
+        run: |
+          file /mnt/prefix-win/bin/riscv32-unknown-elf-gcc.exe
+          file /mnt/prefix-win/bin/riscv32-unknown-elf-gdb.exe
+          file /mnt/prefix-win/bin/clang.exe
+          file /mnt/prefix-win/bin/clangd.exe
+          file /mnt/prefix-win/bin/clang-format.exe
+          file /mnt/prefix-win/bin/clang-tidy.exe
+
+      - name: Verify Windows GDB TUI configuration
+        run: |
+          cfg="$(x86_64-w64-mingw32-strings /mnt/prefix-win/bin/riscv32-unknown-elf-gdb.exe)"
+          grep -Fq -- '--enable-tui' <<<"$cfg"
+          grep -Fq -- '--with-curses' <<<"$cfg"
+
+      - name: Show Windows DLL dependencies
+        run: |
+          while IFS= read -r -d '' exe; do
+            echo
+            echo "=== $exe ==="
+            x86_64-w64-mingw32-objdump -p "$exe" |
+              sed -n 's/^[[:space:]]*DLL Name: /  /p'
+          done < <(find /mnt/prefix-win -type f -name '*.exe' -print0)
+
+      - name: Verify Windows runtime dependencies
+        run: |
+          PREFIX=/mnt/prefix-win \
+          WITH_HOST=x86_64-w64-mingw32 \
+            bash build/check-host-runtime.sh
+
       - name: Package Windows SDK
         run: |
           SRC="$PWD" \
@@ -285,21 +399,29 @@ jobs:
           OUT=/mnt/out \
           WITH_HOST=x86_64-w64-mingw32 \
             bash build/build-baremetal.sh package
-      - name: Inspect Windows host tools
+
+      - name: Verify Windows archives
         run: |
-          file \
-            /mnt/prefix-win/bin/riscv32-unknown-elf-gcc.exe
-          file \
-            /mnt/prefix-win/bin/clang.exe
-          file \
-            /mnt/prefix-win/bin/clangd.exe
-          file \
-            /mnt/prefix-win/bin/clang-format.exe
-          file \
-            /mnt/prefix-win/bin/clang-tidy.exe
+          test -f /mnt/out/niiet-riscv-toolchain-windows-x86_64.tar.gz
+          test -f /mnt/out/niiet-riscv-toolchain-windows-x86_64.zip
+
+          tar -tzf /mnt/out/niiet-riscv-toolchain-windows-x86_64.tar.gz | grep -q '^\./bin/'
+          unzip -Z1 /mnt/out/niiet-riscv-toolchain-windows-x86_64.zip | grep -q '^bin/'
+
+          if tar -tzf /mnt/out/niiet-riscv-toolchain-windows-x86_64.tar.gz | grep -q '^\./niiet-riscv-toolchain-'; then
+            echo "ERROR: tar.gz contains an extra root directory"
+            exit 1
+          fi
+
+          if unzip -Z1 /mnt/out/niiet-riscv-toolchain-windows-x86_64.zip | grep -q '^niiet-riscv-toolchain-'; then
+            echo "ERROR: zip contains an extra root directory"
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v7
         with:
-          name: >-
-            riscv32-imafdc-elf-x86_64-windows-gcc-clang
-          path: /mnt/out/*.tar.xz
+          name: niiet-riscv-toolchain-windows-x86_64
+          path: |
+            /mnt/out/niiet-riscv-toolchain-windows-x86_64.tar.gz
+            /mnt/out/niiet-riscv-toolchain-windows-x86_64.zip
           compression-level: 0

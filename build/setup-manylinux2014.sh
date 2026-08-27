@@ -20,7 +20,7 @@ yum install epel-release -y
 yum -y install \
     make autoconf automake libtool texinfo gawk bison flex patch \
     gmp-devel mpfr-devel libmpc-devel zlib-devel expat-devel \
-    bzip2 xz file which diffutils findutils
+    bzip2 xz file which diffutils findutils curl zip unzip
 
 # Snippy's LLVM needs Python >= 3.8. CentOS 7's system python is 2; expose a
 # modern one (manylinux ships relocatable CPythons under /opt/python).

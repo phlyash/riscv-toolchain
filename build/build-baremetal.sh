@@ -41,73 +41,129 @@ case "$(uname -s)" in
   *)      HOSTOS="$(uname -s | tr 'A-Z' 'a-z')" ;;
 esac
 [ -n "$WITH_HOST" ] && case "$WITH_HOST" in *mingw*) HOSTOS=windows ;; esac
-HOSTARCH="$(uname -m)"
+RAW_HOSTARCH="$(uname -m)"
+case "$RAW_HOSTARCH" in
+    x86_64|amd64) HOSTARCH="x86_64" ;;
+    arm64|aarch64) HOSTARCH="aarch64" ;;
+    *) HOSTARCH="$RAW_HOSTARCH" ;;
+esac
 
 log(){ echo "" ; echo "=== [$(date +%H:%M:%S)] $* ===" ; }
 
 # Extra `make` flags for gdb's configure; only set for the canadian cross.
 GDB_EXTRA=""
+GCC_EXTRA=""
+BINUTILS_EXTRA=""
 
-# One full GCC + reduced-multilib + newlib(+nano) + gdb build via the repo Makefile.
-#   $1 = install prefix     $2 = canadian-cross host ("" for a normal build->target)
-gcc_build_into(){
-  local prefix="$1" host="$2"
-  log "configure (GCC + multilib newlib) -> $prefix${host:+ (canadian host=$host)}"
-  rm -rf "$BUILD" && mkdir -p "$BUILD" && cd "$BUILD"
-  "$SRC/configure" \
-    --prefix="$prefix" \
-    --with-arch="$ARCH" --with-abi="$ABI" \
-    --with-isa-spec=20191213 \
-    --with-multilib-generator="$MULTILIB" \
-    --with-languages=c,c++ \
-    --enable-strip \
-    ${host:+--with-host="$host"} \
-    --with-gcc-src="$SOURCES/gcc" \
-    --with-binutils-src="$SOURCES/binutils" \
-    --with-newlib-src="$SOURCES/newlib" \
-    --with-gdb-src="$SOURCES/gdb"
-  log "make newlib -j$NPROC -> $prefix"
-  make -j"$NPROC" newlib ${GDB_EXTRA:+GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA"}
+gcc_build_into() {
+    local prefix="$1" host="$2"
+
+    log "configure GCC/newlib -> $prefix${host:+ (host=$host)}"
+    rm -rf "$BUILD"
+    mkdir -p "$BUILD"
+    cd "$BUILD"
+
+    "$SRC/configure" \
+        --prefix="$prefix" \
+        --with-arch="$ARCH" \
+        --with-abi="$ABI" \
+        --with-isa-spec=20191213 \
+        --with-multilib-generator="$MULTILIB" \
+        --with-languages=c,c++ \
+        --without-system-zlib \
+        --enable-strip \
+        ${host:+--with-host="$host"} \
+        --with-gcc-src="$SOURCES/gcc" \
+        --with-binutils-src="$SOURCES/binutils" \
+        --with-newlib-src="$SOURCES/newlib" \
+        --with-gdb-src="$SOURCES/gdb"
+
+    log "make newlib -j$NPROC -> $prefix"
+
+    make -j"$NPROC" newlib \
+        GCC_EXTRA_CONFIGURE_FLAGS="$GCC_EXTRA" \
+        BINUTILS_TARGET_FLAGS_EXTRA="$BINUTILS_EXTRA" \
+        GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA"
 }
 
-stage_gcc(){
-  # Statically link the C++ runtime into the host tools so the binaries don't
-  # carry GLIBCXX_*/CXXABI_* deps on a newer libstdc++.so than the deployment
-  # box has. Applies to the GNU (gcc/g++) host -> Linux + the mingw Windows host;
-  # NOT macOS (clang/libc++ has no static libstdc++).
-  if [ "$HOSTOS" != macos ]; then
-    export LDFLAGS="-static-libstdc++ -static-libgcc${LDFLAGS:+ $LDFLAGS}"
-  fi
+stage_gcc() {
+    local BASE_CPPFLAGS="${CPPFLAGS:-}"
+    local BASE_LDFLAGS="${LDFLAGS:-}"
+    local DEPS
 
-  if [ -n "$WITH_HOST" ]; then
-    # Canadian cross (build=this machine, host=Windows, target=riscv): the host
-    # cc1/xgcc are Windows .exe's that can't run here, so GCC needs a *native*
-    # (build->target) riscv gcc on PATH to compile target libgcc/libstdc++ and
-    # dump specs. The repo's --with-host doesn't build one (it just adds
-    # --host=... everywhere), so do a native pre-pass into a throwaway prefix and
-    # put it FIRST on PATH. The canadian pass installs the Windows .exe's into its
-    # own $PREFIX; PATH order keeps the runnable native gcc for target steps.
-    local NATIVE="$WORK/native-toolchain"
-    if [ ! -x "$NATIVE/bin/${TUPLE}-gcc" ]; then
-      log "native pre-pass for the canadian cross -> $NATIVE"
-      gcc_build_into "$NATIVE" ""
+    if [ -n "$WITH_HOST" ]; then
+        local NATIVE="$WORK/native-toolchain"
+
+        if [ ! -x "$NATIVE/bin/${TUPLE}-gcc" ]; then
+            log "native pre-pass for canadian cross -> $NATIVE"
+
+            export CPPFLAGS="$BASE_CPPFLAGS"
+            export LDFLAGS="-static-libstdc++ -static-libgcc${BASE_LDFLAGS:+ $BASE_LDFLAGS}"
+
+            GCC_EXTRA=""
+            BINUTILS_EXTRA=""
+            GDB_EXTRA=""
+
+            gcc_build_into "$NATIVE" ""
+        fi
+
+        export PATH="$NATIVE/bin:$PATH"
+        log "native build->target compiler: $(command -v "${TUPLE}-gcc")"
+
+        DEPS="$(HOST="$WITH_HOST" WORK="$WORK" bash "$SRC/build/prepare-mingw-deps.sh" | tail -1)"
+
+        export CPPFLAGS="-I$DEPS/include -I$DEPS/include/ncursesw${BASE_CPPFLAGS:+ $BASE_CPPFLAGS}"
+        export LDFLAGS="-static -static-libgcc -static-libstdc++ -L$DEPS/lib${BASE_LDFLAGS:+ $BASE_LDFLAGS}"
+
+        GCC_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --with-mpc=$DEPS"
+        BINUTILS_EXTRA="--with-expat=$DEPS"
+
+        GDB_EXTRA="--enable-tui --with-curses \
+--enable-static --disable-shared --with-static-standard-libraries \
+--with-gmp=$DEPS --with-mpfr=$DEPS --with-expat=$DEPS \
+--with-libexpat-type=static \
+--without-python --without-guile \
+--with-debuginfod=no --with-lzma=no --with-zstd=no --with-xxhash=no \
+--disable-source-highlight --disable-nls"
+
+        log "Windows static deps: $DEPS"
+        log "Windows LDFLAGS=$LDFLAGS"
+
+        gcc_build_into "$PREFIX" "$WITH_HOST"
+        return
     fi
-    export PATH="$NATIVE/bin:$PATH"
-    log "native build->target compiler on PATH: $(command -v "${TUPLE}-gcc")"
 
-    # gdb needs host gmp/mpfr (not packaged for mingw) -> cross-built into the
-    # mingw sysroot; and the canadian gdb can't use the build host's Python.
-    local DEPS; DEPS="$(HOST="$WITH_HOST" WORK="$WORK" bash "$SRC/build/prepare-mingw-deps.sh" | tail -1)"
-    GDB_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --without-python"
-    log "mingw gdb deps in $DEPS; GDB_TARGET_FLAGS_EXTRA=$GDB_EXTRA"
-  fi
+    DEPS="$(WORK="$WORK" bash "$SRC/build/prepare-host-deps.sh" | tail -1)"
 
-  gcc_build_into "$PREFIX" "$WITH_HOST"
-  log "GCC pass done; sanity check"
-  if [ -z "$WITH_HOST" ]; then
+    export CPPFLAGS="-I$DEPS/include -I$DEPS/include/ncursesw${BASE_CPPFLAGS:+ $BASE_CPPFLAGS}"
+
+    if [ "$HOSTOS" = linux ]; then
+        export LDFLAGS="-L$DEPS/lib -static-libstdc++ -static-libgcc${BASE_LDFLAGS:+ $BASE_LDFLAGS}"
+    else
+        export LDFLAGS="-L$DEPS/lib${BASE_LDFLAGS:+ $BASE_LDFLAGS}"
+    fi
+
+    GCC_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --with-mpc=$DEPS --with-isl=$DEPS"
+    BINUTILS_EXTRA="--with-expat=$DEPS"
+
+    GDB_EXTRA="--enable-tui --with-curses \
+--enable-static --disable-shared \
+--with-gmp=$DEPS --with-mpfr=$DEPS --with-expat=$DEPS \
+--with-libexpat-type=static \
+--without-python --without-guile \
+--with-debuginfod=no --with-lzma=no --with-zstd=no --with-xxhash=no \
+--disable-source-highlight --disable-nls"
+
+    if [ "$HOSTOS" = linux ]; then
+        GDB_EXTRA="$GDB_EXTRA --with-static-standard-libraries"
+    fi
+
+    log "native static deps: $DEPS"
+    gcc_build_into "$PREFIX" ""
+
     "$PREFIX/bin/${TUPLE}-gcc" -v 2>&1 | tail -3 || true
     "$PREFIX/bin/${TUPLE}-gcc" -print-multi-lib || true
-  fi
+    "$PREFIX/bin/${TUPLE}-gdb" --configuration || true
 }
 
 # Cross-build clang/lld for a mingw Windows host (canadian cross). LLVM needs
@@ -256,22 +312,51 @@ stage_clang(){
   "$PREFIX/bin/lld" --version || true
 }
 
-stage_package(){
-  log "package"
-  echo "before: $(du -sh "$PREFIX" | cut -f1)"
-  # Strip standalone executables / shared libs; skip ar archives (.a) so they stay linkable.
-  find "$PREFIX" -type f -exec sh -c '
-    t=$(file -b "$1")
-    case "$t" in
-      *ELF*executable*|*ELF*shared*|*Mach-O*executable*|*Mach-O*dynamically*|*PE32*executable*) strip "$1" 2>/dev/null || true ;;
-    esac' _ {} \; || true
-  echo "after strip: $(du -sh "$PREFIX" | cut -f1)"
-  if [ -x "$SRC/.github/dedup-dir.sh" ]; then "$SRC/.github/dedup-dir.sh" "$PREFIX" || true; fi
-  echo "after dedup: $(du -sh "$PREFIX" | cut -f1)"
-  mkdir -p "$OUT"
-  local name="riscv32-imafdc-elf-${HOSTARCH}-${HOSTOS}-gcc-clang"
-  XZ_OPT="-e -T0" tar cJf "$OUT/${name}.tar.xz" -C "$(dirname "$PREFIX")" "$(basename "$PREFIX")"
-  log "wrote $OUT/${name}.tar.xz ($(du -h "$OUT/${name}.tar.xz" | cut -f1))"
+stage_package() {
+    log "package"
+
+    echo "before: $(du -sh "$PREFIX" | cut -f1)"
+
+    local strip_tool="strip"
+    [ -n "$WITH_HOST" ] && strip_tool="${WITH_HOST}-strip"
+
+    find "$PREFIX" -type f -exec sh -c '
+        tool="$1"
+        f="$2"
+        t="$(file -b "$f" 2>/dev/null || true)"
+
+        case "$t" in
+            *ELF*executable*|*ELF*shared*|*Mach-O*executable*|*Mach-O*dynamically*|*PE32*executable*)
+                "$tool" "$f" 2>/dev/null || true
+                ;;
+        esac
+    ' _ "$strip_tool" {} \;
+
+    echo "after strip: $(du -sh "$PREFIX" | cut -f1)"
+
+    if [ -x "$SRC/.github/dedup-dir.sh" ]; then
+        "$SRC/.github/dedup-dir.sh" "$PREFIX" || true
+    fi
+
+    echo "after dedup: $(du -sh "$PREFIX" | cut -f1)"
+
+    mkdir -p "$OUT"
+
+    local name="niiet-riscv-toolchain-${HOSTOS}-${HOSTARCH}"
+
+    rm -f \
+        "$OUT/${name}.tar.gz" \
+        "$OUT/${name}.zip"
+
+    tar -czf "$OUT/${name}.tar.gz" -C "$PREFIX" .
+
+    (
+        cd "$PREFIX"
+        zip -qr "$OUT/${name}.zip" .
+    )
+
+    log "wrote $OUT/${name}.tar.gz ($(du -h "$OUT/${name}.tar.gz" | cut -f1))"
+    log "wrote $OUT/${name}.zip ($(du -h "$OUT/${name}.zip" | cut -f1))"
 }
 
 case "$STAGE" in
