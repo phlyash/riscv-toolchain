@@ -56,22 +56,27 @@ fetch() {
     tar xf expat.tar.xz
     (cd "expat-${EXPAT_VER}" && ./configure --prefix="$PREFIX" --disable-shared --enable-static --without-docbook --without-examples --without-tests && make -j"$NPROC" && make install)
 
-    echo "### ncurses $NCURSES_VER"
-    fetch "https://invisible-mirror.net/archives/ncurses/ncurses-${NCURSES_VER}.tar.gz" ncurses.tar.gz
-    tar xf ncurses.tar.gz
-    (
-        cd "ncurses-${NCURSES_VER}"
-        ./configure --prefix="$PREFIX" --without-shared --with-normal \
-            --without-debug --without-ada --without-cxx-binding \
-            --without-progs --without-manpages --disable-db-install \
-            --enable-widec --enable-overwrite
-        make -j"$NPROC"
-        make install.libs install.includes
-    )
+    if [ "$(uname -s)" = "Darwin" ]; then
+        echo "### ncurses: using macOS system curses"
+    else
+        echo "### ncurses $NCURSES_VER"
+        fetch "https://invisible-mirror.net/archives/ncurses/ncurses-${NCURSES_VER}.tar.gz" ncurses.tar.gz
+        tar xf ncurses.tar.gz
 
-    if [ -f "$PREFIX/lib/libncursesw.a" ]; then
-        cp -f "$PREFIX/lib/libncursesw.a" "$PREFIX/lib/libncurses.a"
-        cp -f "$PREFIX/lib/libncursesw.a" "$PREFIX/lib/libcurses.a"
+        (
+            cd "ncurses-${NCURSES_VER}"
+            ./configure --prefix="$PREFIX" --without-shared --with-normal \
+                --without-debug --without-ada --without-cxx-binding \
+                --without-progs --without-manpages --disable-db-install \
+                --enable-widec --enable-overwrite
+            make -j"$NPROC"
+            make install.libs install.includes
+        )
+
+        if [ -f "$PREFIX/lib/libncursesw.a" ]; then
+            cp -f "$PREFIX/lib/libncursesw.a" "$PREFIX/lib/libncurses.a"
+            cp -f "$PREFIX/lib/libncursesw.a" "$PREFIX/lib/libcurses.a"
+        fi
     fi
 } >&2
 
