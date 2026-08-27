@@ -60,7 +60,7 @@ fetch() {
         echo "### ncurses: using macOS system curses"
     else
         echo "### ncurses $NCURSES_VER"
-        fetch "https://invisible-mirror.net/archives/ncurses/ncurses-${NCURSES_VER}.tar.gz" ncurses.tar.gz
+        fetch "https://ftp.gnu.org/gnu/ncurses/ncurses-${NCURSES_VER}.tar.gz" ncurses.tar.gz
         tar xf ncurses.tar.gz
 
         (

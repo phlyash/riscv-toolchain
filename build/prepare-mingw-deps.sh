@@ -72,7 +72,7 @@ fetch() {
     (cd "expat-${EXPAT_VER}" && ./configure --host="$HOST" --prefix="$SYSROOT" --disable-shared --enable-static --without-docbook --without-examples --without-tests && make -j"$NPROC" && $SUDO make install)
 
     echo "### ncurses $NCURSES_VER"
-    fetch "https://invisible-mirror.net/archives/ncurses/ncurses-${NCURSES_VER}.tar.gz" ncurses.tar.gz
+    fetch "https://ftp.gnu.org/gnu/ncurses/ncurses-${NCURSES_VER}.tar.gz" ncurses.tar.gz
     tar xf ncurses.tar.gz
     (
         cd "ncurses-${NCURSES_VER}"
