@@ -58,6 +58,8 @@ BINUTILS_EXTRA=""
 gcc_build_into() {
     local prefix="$1"
     local host="$2"
+    local wrapper_cppflags="${3:-}"
+    local wrapper_ldflags="${4:-}"
 
     log "configure GCC/newlib -> $prefix${host:+ (host=$host)}"
 
@@ -65,6 +67,9 @@ gcc_build_into() {
     mkdir -p "$BUILD"
     cd "$BUILD"
 
+    # This configure always runs on the build machine.
+    # Do not leak MinGW/static host flags into it.
+    CPPFLAGS="$wrapper_cppflags" LDFLAGS="$wrapper_ldflags" \
     "$SRC/configure" \
         --prefix="$prefix" \
         --with-arch="$ARCH" \
@@ -82,6 +87,9 @@ gcc_build_into() {
 
     log "make newlib -j$NPROC -> $prefix"
 
+    # Here the exported CPPFLAGS/LDFLAGS are intentionally inherited.
+    # Child GCC/binutils/GDB configure scripts receive CONFIGURE_HOST
+    # and build the actual Windows host executables.
     make -j"$NPROC" newlib \
         GCC_EXTRA_CONFIGURE_FLAGS="$GCC_EXTRA" \
         BINUTILS_TARGET_FLAGS_EXTRA="$BINUTILS_EXTRA" \
@@ -93,13 +101,9 @@ stage_gcc() {
     local BASE_LDFLAGS="${LDFLAGS:-}"
     local DEPS
 
-    # Windows Canadian cross:
-    # Linux build host -> Windows x86_64 host -> RISC-V target.
     if [ -n "$WITH_HOST" ]; then
         local NATIVE="$WORK/native-toolchain"
 
-        # First build a native Linux build->target compiler needed
-        # during the Canadian-cross build.
         if [ ! -x "$NATIVE/bin/${TUPLE}-gcc" ]; then
             log "native pre-pass for Canadian cross -> $NATIVE"
 
@@ -110,20 +114,15 @@ stage_gcc() {
             BINUTILS_EXTRA=""
             GDB_EXTRA=""
 
-            gcc_build_into "$NATIVE" ""
+            gcc_build_into "$NATIVE" "" "$BASE_CPPFLAGS" "$BASE_LDFLAGS"
         fi
 
         export PATH="$NATIVE/bin:$PATH"
         log "native build->target compiler: $(command -v "${TUPLE}-gcc")"
 
-        # Builds static GMP/MPFR/MPC/zlib/expat/ncurses for MinGW.
         DEPS="$(HOST="$WITH_HOST" WORK="$WORK" bash "$SRC/build/prepare-mingw-deps.sh" | tail -1)"
 
         export CPPFLAGS="-I$DEPS/include -I$DEPS/include/ncursesw${BASE_CPPFLAGS:+ $BASE_CPPFLAGS}"
-
-        # Important: -static also makes MinGW use static winpthread.
-        # This prevents libwinpthread-1.dll, libstdc++-6.dll,
-        # libgcc_s_seh-1.dll and similar runtime dependencies.
         export LDFLAGS="-static -static-libgcc -static-libstdc++ -L$DEPS/lib${BASE_LDFLAGS:+ $BASE_LDFLAGS}"
 
         GCC_EXTRA="--with-gmp=$DEPS --with-mpfr=$DEPS --with-mpc=$DEPS"
@@ -141,14 +140,12 @@ stage_gcc() {
         log "Windows CPPFLAGS=$CPPFLAGS"
         log "Windows LDFLAGS=$LDFLAGS"
 
-        gcc_build_into "$PREFIX" "$WITH_HOST"
+        gcc_build_into "$PREFIX" "$WITH_HOST" "$BASE_CPPFLAGS" "$BASE_LDFLAGS"
         return
     fi
 
-    # Native Linux/macOS host dependencies.
     DEPS="$(WORK="$WORK" bash "$SRC/build/prepare-host-deps.sh" | tail -1)"
 
-    # macOS uses Apple's system curses. Linux uses our static ncurses.
     if [ "$HOSTOS" = macos ]; then
         export CPPFLAGS="-I$DEPS/include${BASE_CPPFLAGS:+ $BASE_CPPFLAGS}"
     else
@@ -176,7 +173,6 @@ stage_gcc() {
         GDB_EXTRA="$GDB_EXTRA --with-static-standard-libraries"
     fi
 
-    # Verify macOS SDK actually provides curses before starting the long GCC/GDB build.
     if [ "$HOSTOS" = macos ]; then
         log "checking macOS system curses"
         cat > "$WORK/test-curses.c" <<'EOF'
@@ -188,10 +184,8 @@ EOF
     fi
 
     log "native static deps: $DEPS"
-    log "CPPFLAGS=$CPPFLAGS"
-    log "LDFLAGS=$LDFLAGS"
 
-    gcc_build_into "$PREFIX" ""
+    gcc_build_into "$PREFIX" "" "$BASE_CPPFLAGS" "$BASE_LDFLAGS"
 
     "$PREFIX/bin/${TUPLE}-gcc" -v 2>&1 | tail -3 || true
     "$PREFIX/bin/${TUPLE}-gcc" -print-multi-lib || true
