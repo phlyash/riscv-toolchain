@@ -732,8 +732,10 @@ stamps/build-gdb-newlib: $(GDB_SRCDIR) $(GDB_SRC_GIT) $(PREPARATION_STAMP)
 		--disable-ld \
 		--disable-gold \
 		--disable-gprof
-	$(MAKE) -C $(notdir $@) $(GDB_TARGET_MAKE_FLAGS_EXTRA)
-	$(MAKE) -C $(notdir $@) $(INSTALL_TARGET) $(GDB_TARGET_MAKE_FLAGS_EXTRA)
+	$(MAKE) -C $(notdir $@)
+	$(if $(strip $(GDB_TARGET_MAKE_FLAGS_EXTRA)),rm -f $(notdir $@)/gdb/gdb.exe)
+	$(if $(strip $(GDB_TARGET_MAKE_FLAGS_EXTRA)),$(MAKE) -C $(notdir $@)/gdb $(GDB_TARGET_MAKE_FLAGS_EXTRA) gdb.exe)
+	$(MAKE) -C $(notdir $@) $(INSTALL_TARGET)
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-gcc-newlib-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binutils-newlib

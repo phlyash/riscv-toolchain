@@ -269,11 +269,24 @@ test_windows_gdb_statically_links_winpthread() {
             "GDB_TARGET_MAKE_FLAGS_EXTRA=$gdb_make_flags"
     )" || fail "Makefile.in dry-run for Windows GDB failed"
 
-    grep -Fq -- \
-        'LDFLAGS="-all-static -static-libgcc -static-libstdc++"' \
+    if grep -Eq -- \
+        '^: -C build-gdb-newlib( |$).*LDFLAGS=.*-all-static' \
+        <<<"$make_output"; then
+        echo "$make_output" >&2
+        fail "Libtool-only -all-static leaks into the top-level GDB build"
+    fi
+
+    grep -Fxq -- 'rm -f build-gdb-newlib/gdb/gdb.exe' \
         <<<"$make_output" || {
         echo "$make_output" >&2
-        fail "Makefile.in does not propagate complete static linking to the GDB build"
+        fail "Makefile.in does not force the Windows GDB executable to relink"
+    }
+
+    grep -Fxq -- \
+        ': -C build-gdb-newlib/gdb LDFLAGS="-all-static -static-libgcc -static-libstdc++" gdb.exe' \
+        <<<"$make_output" || {
+        echo "$make_output" >&2
+        fail "Makefile.in does not isolate complete static linking to gdb.exe"
     }
 }
 
