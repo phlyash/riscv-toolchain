@@ -31,7 +31,7 @@ cat > "$FAKE_BIN/uname" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     -m) printf 'x86_64\n' ;;
-    *) printf 'Linux\n' ;;
+    *) printf '%s\n' "${FAKE_UNAME_SYSTEM:-Linux}" ;;
 esac
 EOF
 
@@ -53,6 +53,11 @@ if [[ " $* " == *" install-distribution-stripped "* ]]; then
         chmod +x "$PREFIX/bin/$tool"
     done
 fi
+EOF
+
+cat > "$FAKE_BIN/python3" <<'EOF'
+#!/usr/bin/env bash
+exit 0
 EOF
 
 cat > "$FAKE_BIN/make" <<'EOF'
@@ -142,6 +147,20 @@ run_linux_clang() {
         bash "$ROOT/build/build-baremetal.sh" clang >/dev/null
 }
 
+run_macos_clang() {
+    local prefix="$TMP/prefix-macos-clang"
+    local work="$TMP/work-macos-clang"
+
+    PATH="$FAKE_BIN:$PATH" \
+    FAKE_UNAME_SYSTEM=Darwin \
+    SRC="$FAKE_SRC" \
+    SOURCES="$TMP/sources" \
+    WORK="$work" \
+    PREFIX="$prefix" \
+    OUT="$TMP/out" \
+        bash "$ROOT/build/build-baremetal.sh" clang >/dev/null
+}
+
 run_windows_gcc() {
     local prefix="$TMP/prefix-windows-gcc"
     local work="$TMP/work-windows-gcc"
@@ -184,16 +203,36 @@ test_linux_clang_statically_links_libgcc() {
     done
 }
 
+test_macos_clang_works_with_empty_static_link_flags() {
+    if ! run_macos_clang; then
+        fail "macOS LLVM configuration is not compatible with Bash 3.2 nounset"
+    fi
+
+    grep -Fxq -- '-DLLVM_STATIC_LINK_CXX_STDLIB=OFF' \
+        "$CAPTURE_DIR/cmake.args" || {
+        cat "$CAPTURE_DIR/cmake.args" >&2
+        fail "macOS LLVM does not disable static C++ standard library linking"
+    }
+
+    if grep -Eq -- '^-DCMAKE_(EXE|SHARED|MODULE)_LINKER_FLAGS=' \
+        "$CAPTURE_DIR/cmake.args"; then
+        cat "$CAPTURE_DIR/cmake.args" >&2
+        fail "macOS LLVM unexpectedly receives Linux-only static linker flags"
+    fi
+}
+
 test_windows_gdb_statically_links_winpthread() {
-    local gdb_flags make_output make_work
+    local gdb_flags gdb_make_flags make_output make_work
 
     run_windows_gcc
 
-    grep -Eq \
-        'GDB_TARGET_FLAGS_EXTRA=.*CFLAGS="[^"]*-static[^"]*".*CXXFLAGS="[^"]*-static[^"]*"' \
-        "$CAPTURE_DIR/make.args" || {
+    gdb_make_flags="$(sed -n 's/^GDB_TARGET_MAKE_FLAGS_EXTRA=//p' \
+        "$CAPTURE_DIR/make.args")"
+
+    [ "$gdb_make_flags" = \
+        'LDFLAGS="-all-static -static-libgcc -static-libstdc++"' ] || {
         cat "$CAPTURE_DIR/make.args" >&2
-        fail "Windows GDB configure flags do not pass -static through CFLAGS/CXXFLAGS"
+        fail "Windows GDB build does not request Libtool's complete static linking mode"
     }
 
     if [ -z "$REAL_MAKE" ]; then
@@ -226,13 +265,15 @@ test_windows_gdb_statically_links_winpthread() {
             AWK=awk \
             srcdir="$ROOT" \
             builddir="$make_work" \
-            "GDB_TARGET_FLAGS_EXTRA=$gdb_flags"
+            "GDB_TARGET_FLAGS_EXTRA=$gdb_flags" \
+            "GDB_TARGET_MAKE_FLAGS_EXTRA=$gdb_make_flags"
     )" || fail "Makefile.in dry-run for Windows GDB failed"
 
-    grep -Fq -- 'CFLAGS="-O2 -static" CXXFLAGS="-O2 -static"' \
+    grep -Fq -- \
+        'LDFLAGS="-all-static -static-libgcc -static-libstdc++"' \
         <<<"$make_output" || {
         echo "$make_output" >&2
-        fail "Makefile.in does not propagate static CFLAGS/CXXFLAGS to GDB configure"
+        fail "Makefile.in does not propagate complete static linking to the GDB build"
     }
 }
 
@@ -249,16 +290,20 @@ case "$TEST_CASE" in
     linux-clang-static-libgcc)
         run_test test_linux_clang_statically_links_libgcc
         ;;
+    macos-clang-no-static-gcc-flags)
+        run_test test_macos_clang_works_with_empty_static_link_flags
+        ;;
     windows-gdb-static-winpthread)
         run_test test_windows_gdb_statically_links_winpthread
         ;;
     all)
         run_test test_linux_gcc_disables_libcc1
         run_test test_linux_clang_statically_links_libgcc
+        run_test test_macos_clang_works_with_empty_static_link_flags
         run_test test_windows_gdb_statically_links_winpthread
         ;;
     *)
-        echo "usage: $0 {linux-gcc-no-libcc1|linux-clang-static-libgcc|windows-gdb-static-winpthread|all}" >&2
+        echo "usage: $0 {linux-gcc-no-libcc1|linux-clang-static-libgcc|macos-clang-no-static-gcc-flags|windows-gdb-static-winpthread|all}" >&2
         exit 2
         ;;
 esac

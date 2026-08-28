@@ -52,6 +52,7 @@ log() {
 }
 
 GDB_EXTRA=""
+GDB_MAKE_EXTRA=""
 # libcc1 is an optional, always-shared bridge for GDB's `compile` command.
 # Minimal host artifacts omit it instead of carrying GCC host plugin DSOs.
 GCC_EXTRA=""
@@ -95,7 +96,8 @@ gcc_build_into() {
     make -j"$NPROC" newlib \
         GCC_EXTRA_CONFIGURE_FLAGS="$GCC_EXTRA" \
         BINUTILS_TARGET_FLAGS_EXTRA="$BINUTILS_EXTRA" \
-        GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA"
+        GDB_TARGET_FLAGS_EXTRA="$GDB_EXTRA" \
+        GDB_TARGET_MAKE_FLAGS_EXTRA="$GDB_MAKE_EXTRA"
 }
 
 stage_gcc() {
@@ -115,6 +117,7 @@ stage_gcc() {
             GCC_EXTRA="--disable-libcc1"
             BINUTILS_EXTRA=""
             GDB_EXTRA=""
+            GDB_MAKE_EXTRA=""
 
             gcc_build_into "$NATIVE" "" "$BASE_CPPFLAGS" "$BASE_LDFLAGS"
         fi
@@ -159,8 +162,11 @@ EOF
         GCC_EXTRA="--disable-libcc1 --with-gmp=$DEPS --with-mpfr=$DEPS --with-mpc=$DEPS"
         BINUTILS_EXTRA="--with-expat=$DEPS --without-zstd"
 
-        # GDB's MinGW link path also consumes compiler flags. Passing -static
-        # here selects libwinpthread.a instead of libwinpthread-1.dll.
+        # GDB's final executable link runs through Libtool, where -static only
+        # affects uninstalled Libtool libraries. -all-static is the separate
+        # mode that reaches the compiler driver and selects libwinpthread.a.
+        GDB_MAKE_EXTRA='LDFLAGS="-all-static -static-libgcc -static-libstdc++"'
+
         GDB_EXTRA="--enable-tui --with-curses \
 --enable-static --disable-shared --with-static-standard-libraries \
 --with-gmp=$DEPS --with-mpfr=$DEPS --with-expat=$DEPS \
@@ -331,14 +337,15 @@ stage_clang() {
     mkdir -p "$LB"
     cd "$LB"
 
-    local LLVM_STATIC_CXX=OFF
-    local LLVM_STATIC_GCC_FLAGS=()
+    # Keep this array non-empty: macOS ships Bash 3.2, whose nounset mode
+    # rejects expansion of an empty array.
+    local LLVM_HOST_LINK_ARGS=(-DLLVM_STATIC_LINK_CXX_STDLIB=OFF)
 
     if [ "$HOSTOS" != macos ]; then
         # LLVM_STATIC_LINK_CXX_STDLIB covers libstdc++, but not GCC's unwind
         # runtime. Apply -static-libgcc to every kind of host link product.
-        LLVM_STATIC_CXX=ON
-        LLVM_STATIC_GCC_FLAGS=(
+        LLVM_HOST_LINK_ARGS=(
+            -DLLVM_STATIC_LINK_CXX_STDLIB=ON
             -DCMAKE_EXE_LINKER_FLAGS=-static-libgcc
             -DCMAKE_SHARED_LINKER_FLAGS=-static-libgcc
             -DCMAKE_MODULE_LINKER_FLAGS=-static-libgcc
@@ -348,8 +355,7 @@ stage_clang() {
     cmake -G Ninja "$SRC/llvm/llvm" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DLLVM_STATIC_LINK_CXX_STDLIB="$LLVM_STATIC_CXX" \
-        "${LLVM_STATIC_GCC_FLAGS[@]}" \
+        "${LLVM_HOST_LINK_ARGS[@]}" \
         -DPython3_EXECUTABLE="$PY" \
         -DLLVM_TARGETS_TO_BUILD="RISCV" \
         -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" \
