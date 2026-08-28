@@ -91,6 +91,8 @@ Strategy (to be validated empirically, in order):
   OUT, WITH_HOST); same script local + CI.
 - `test-build-config.sh [case|all]` — fast regression tests for host static-link flags;
   slow build tools are replaced with local argument recorders.
+- `test-fetch-source.sh` — verifies that dependency downloads fall back to the next
+  mirror and never leave a partial archive at the final path.
 
 Local run (Apple Silicon → produces an **arm64**-hosted toolchain, validation only):
 ```

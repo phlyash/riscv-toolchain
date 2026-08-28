@@ -15,7 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Test host runtime link configuration
-        run: bash build/test-build-config.sh all
+        run: |
+          bash build/test-build-config.sh all
+          bash build/test-fetch-source.sh
 
   build:
     uses: ./.github/workflows/build-reusable.yaml

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=fetch-source.sh
+source "$SCRIPT_DIR/fetch-source.sh"
+
 HOST="${HOST:-x86_64-w64-mingw32}"
 WORK="${WORK:-/work}"
 NPROC="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
@@ -31,10 +35,6 @@ if [ -f "$SYSROOT/lib/libgmp.a" ] &&
     exit 0
 fi
 
-fetch() {
-    curl -fL --retry 4 --retry-delay 3 --connect-timeout 30 "$1" -o "$2"
-}
-
 {
     B="$WORK/mingw-deps"
     rm -rf "$B"
@@ -42,22 +42,32 @@ fetch() {
     cd "$B"
 
     echo "### GMP $GMP_VER"
-    fetch "https://ftp.gnu.org/gnu/gmp/gmp-${GMP_VER}.tar.xz" gmp.tar.xz
+    fetch_source gmp.tar.xz \
+        "https://gmplib.org/download/gmp/gmp-${GMP_VER}.tar.xz" \
+        "https://ftpmirror.gnu.org/gmp/gmp-${GMP_VER}.tar.xz" \
+        "https://ftp.gnu.org/gnu/gmp/gmp-${GMP_VER}.tar.xz"
     tar xf gmp.tar.xz
     (cd "gmp-${GMP_VER}" && ./configure --host="$HOST" --prefix="$SYSROOT" --disable-shared --enable-static CC_FOR_BUILD=gcc && make -j"$NPROC" && $SUDO make install)
 
     echo "### MPFR $MPFR_VER"
-    fetch "https://ftp.gnu.org/gnu/mpfr/mpfr-${MPFR_VER}.tar.xz" mpfr.tar.xz
+    fetch_source mpfr.tar.xz \
+        "https://www.mpfr.org/mpfr-${MPFR_VER}/mpfr-${MPFR_VER}.tar.xz" \
+        "https://ftpmirror.gnu.org/mpfr/mpfr-${MPFR_VER}.tar.xz" \
+        "https://ftp.gnu.org/gnu/mpfr/mpfr-${MPFR_VER}.tar.xz"
     tar xf mpfr.tar.xz
     (cd "mpfr-${MPFR_VER}" && ./configure --host="$HOST" --prefix="$SYSROOT" --with-gmp="$SYSROOT" --disable-shared --enable-static && make -j"$NPROC" && $SUDO make install)
 
     echo "### MPC $MPC_VER"
-    fetch "https://ftp.gnu.org/gnu/mpc/mpc-${MPC_VER}.tar.gz" mpc.tar.gz
+    fetch_source mpc.tar.gz \
+        "https://www.multiprecision.org/downloads/mpc-${MPC_VER}.tar.gz" \
+        "https://ftpmirror.gnu.org/mpc/mpc-${MPC_VER}.tar.gz" \
+        "https://ftp.gnu.org/gnu/mpc/mpc-${MPC_VER}.tar.gz"
     tar xf mpc.tar.gz
     (cd "mpc-${MPC_VER}" && ./configure --host="$HOST" --prefix="$SYSROOT" --with-gmp="$SYSROOT" --with-mpfr="$SYSROOT" --disable-shared --enable-static && make -j"$NPROC" && $SUDO make install)
 
     echo "### zlib $ZLIB_VER"
-    fetch "https://github.com/madler/zlib/releases/download/v${ZLIB_VER}/zlib-${ZLIB_VER}.tar.xz" zlib.tar.xz
+    fetch_source zlib.tar.xz \
+        "https://github.com/madler/zlib/releases/download/v${ZLIB_VER}/zlib-${ZLIB_VER}.tar.xz"
     tar xf zlib.tar.xz
     (
         cd "zlib-${ZLIB_VER}"
@@ -67,12 +77,16 @@ fetch() {
     )
 
     echo "### Expat $EXPAT_VER"
-    fetch "https://github.com/libexpat/libexpat/releases/download/${EXPAT_TAG}/expat-${EXPAT_VER}.tar.xz" expat.tar.xz
+    fetch_source expat.tar.xz \
+        "https://github.com/libexpat/libexpat/releases/download/${EXPAT_TAG}/expat-${EXPAT_VER}.tar.xz"
     tar xf expat.tar.xz
     (cd "expat-${EXPAT_VER}" && ./configure --host="$HOST" --prefix="$SYSROOT" --disable-shared --enable-static --without-docbook --without-examples --without-tests && make -j"$NPROC" && $SUDO make install)
 
     echo "### ncurses $NCURSES_VER"
-    fetch "https://ftp.gnu.org/gnu/ncurses/ncurses-${NCURSES_VER}.tar.gz" ncurses.tar.gz
+    fetch_source ncurses.tar.gz \
+        "https://invisible-mirror.net/archives/ncurses/ncurses-${NCURSES_VER}.tar.gz" \
+        "https://ftpmirror.gnu.org/ncurses/ncurses-${NCURSES_VER}.tar.gz" \
+        "https://ftp.gnu.org/gnu/ncurses/ncurses-${NCURSES_VER}.tar.gz"
     tar xf ncurses.tar.gz
     (
         cd "ncurses-${NCURSES_VER}"
