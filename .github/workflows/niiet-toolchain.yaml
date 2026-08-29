@@ -2,6 +2,11 @@ name: NIIET baremetal toolchain
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Git tag used for the published GitHub Release
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -135,12 +140,20 @@ jobs:
         if: always()
         run: df -h / /mnt
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload Linux tar.gz artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: niiet-riscv-toolchain-linux-x86_64
-          path: |
-            /mnt/out/niiet-riscv-toolchain-linux-x86_64.tar.gz
-            /mnt/out/niiet-riscv-toolchain-linux-x86_64.zip
+          name: niiet-riscv-toolchain-linux-x86_64.tar.gz
+          path: /mnt/out/niiet-riscv-toolchain-linux-x86_64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload Linux zip artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: niiet-riscv-toolchain-linux-x86_64.zip
+          path: /mnt/out/niiet-riscv-toolchain-linux-x86_64.zip
+          if-no-files-found: error
           compression-level: 0
 
   macos-aarch64:
@@ -255,12 +268,20 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload macOS tar.gz artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: niiet-riscv-toolchain-macos-aarch64
-          path: |
-            out/niiet-riscv-toolchain-macos-aarch64.tar.gz
-            out/niiet-riscv-toolchain-macos-aarch64.zip
+          name: niiet-riscv-toolchain-macos-aarch64.tar.gz
+          path: out/niiet-riscv-toolchain-macos-aarch64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload macOS zip artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: niiet-riscv-toolchain-macos-aarch64.zip
+          path: out/niiet-riscv-toolchain-macos-aarch64.zip
+          if-no-files-found: error
           compression-level: 0
 
   windows-x86_64:
@@ -418,10 +439,53 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload Windows tar.gz artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: niiet-riscv-toolchain-windows-x86_64
-          path: |
-            /mnt/out/niiet-riscv-toolchain-windows-x86_64.tar.gz
-            /mnt/out/niiet-riscv-toolchain-windows-x86_64.zip
+          name: niiet-riscv-toolchain-windows-x86_64.tar.gz
+          path: /mnt/out/niiet-riscv-toolchain-windows-x86_64.tar.gz
+          if-no-files-found: error
           compression-level: 0
+
+      - name: Upload Windows zip artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: niiet-riscv-toolchain-windows-x86_64.zip
+          path: /mnt/out/niiet-riscv-toolchain-windows-x86_64.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - linux-x86_64
+      - macos-aarch64
+      - windows-x86_64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: niiet-riscv-toolchain-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify release assets
+        run: bash build/verify-release-files.sh release-assets
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "NIIET RISC-V Toolchain $RELEASE_TAG" \
+            --generate-notes \
+            --latest

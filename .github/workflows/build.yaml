@@ -18,6 +18,7 @@ jobs:
         run: |
           bash build/test-build-config.sh all
           bash build/test-fetch-source.sh
+          bash build/test-release-files.sh
 
   build:
     uses: ./.github/workflows/build-reusable.yaml
