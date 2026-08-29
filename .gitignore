@@ -13,3 +13,6 @@ Makefile
 # rule above (which is meant for generated out-of-tree build dirs).
 !/build/
 !/build/**
+
+# Isolated implementation branches
+.worktrees/
