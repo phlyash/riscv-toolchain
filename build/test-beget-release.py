@@ -194,6 +194,69 @@ class PrepareBegetReleaseTests(unittest.TestCase):
             self.assertEqual(entry["sha256"], destination_hash)
             self.assertNotEqual(entry["sha256"], source_hash)
 
+    def test_manifest_replaces_its_own_temporary_file_only_after_serialization(self):
+        """A manifest must atomically replace release.json from an output-local temp file."""
+        specification = importlib.util.spec_from_file_location(
+            "prepare_beget_release", BUILDER
+        )
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+            real_replace = builder.os.replace
+            replacements = []
+
+            def observe_replace(source_path, destination_path):
+                replacements.append((Path(source_path), Path(destination_path)))
+                return real_replace(source_path, destination_path)
+
+            arguments = [
+                str(BUILDER), "--type", "compiler", "--tag", "v1.2.3",
+                "--repository", "phlyash/riscv-toolchain", "--run-id", "123456-1",
+                "--input", str(source), "--output", str(output),
+            ]
+            with mock.patch.object(sys, "argv", arguments):
+                with mock.patch.object(builder.os, "replace", side_effect=observe_replace):
+                    builder.main()
+
+            self.assertEqual(len(replacements), 1)
+            temporary_path, destination_path = replacements[0]
+            self.assertEqual(temporary_path.parent, output)
+            self.assertTrue(temporary_path.name.startswith(".release-"))
+            self.assertEqual(destination_path, output / "release.json")
+            self.assertFalse(temporary_path.exists())
+
+    def test_serialization_failure_leaves_no_manifest_or_temporary_file(self):
+        """A partially written manifest temp file must be removed when JSON output fails."""
+        specification = importlib.util.spec_from_file_location(
+            "prepare_beget_release", BUILDER
+        )
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+
+            def write_partial_json_then_fail(_manifest, stream, **_kwargs):
+                stream.write("{")
+                raise OSError("simulated JSON serialization failure")
+
+            arguments = [
+                str(BUILDER), "--type", "compiler", "--tag", "v1.2.3",
+                "--repository", "phlyash/riscv-toolchain", "--run-id", "123456-1",
+                "--input", str(source), "--output", str(output),
+            ]
+            with mock.patch.object(sys, "argv", arguments):
+                with mock.patch.object(builder.json, "dump", side_effect=write_partial_json_then_fail):
+                    with self.assertRaisesRegex(OSError, "simulated JSON serialization failure"):
+                        builder.main()
+
+            self.assertFalse((output / "release.json").exists())
+            self.assertEqual(list(output.glob(".release-*")), [])
+
     def test_rejects_missing_windows_zip(self):
         """A partial release must not create a manifest declaring completion."""
         with tempfile.TemporaryDirectory() as temporary:

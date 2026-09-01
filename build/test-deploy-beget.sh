@@ -17,6 +17,10 @@ expect_failure() {
   fi
 }
 
+run_clean() {
+  env -i "PATH=$PATH" "$@"
+}
+
 without_env() {
   local name=$1 entry
   filtered_env=()
@@ -49,7 +53,8 @@ while (($#)); do
     *) shift ;;
   esac
 done
-printf '%s %s %s %s\n' "$(stat -c '%a' "$key_path")" "$key_path" "$(stat -c '%a' "$known_hosts_path")" "$known_hosts_path" >>"$MODES"
+credential_dir=$(dirname "$key_path")
+printf '%s %s %s %s %s %s\n' "$(stat -c '%a' "$key_path")" "$key_path" "$(stat -c '%a' "$known_hosts_path")" "$known_hosts_path" "$(stat -c '%a' "$credential_dir")" "$credential_dir" >>"$MODES"
 EOF
 cat >"$BIN/scp" <<'EOF'
 #!/usr/bin/env bash
@@ -68,9 +73,15 @@ while (($#)); do
     *) shift ;;
   esac
 done
-printf '%s %s %s %s\n' "$(stat -c '%a' "$key_path")" "$key_path" "$(stat -c '%a' "$known_hosts_path")" "$known_hosts_path" >>"$MODES"
+credential_dir=$(dirname "$key_path")
+printf '%s %s %s %s %s %s\n' "$(stat -c '%a' "$key_path")" "$key_path" "$(stat -c '%a' "$known_hosts_path")" "$known_hosts_path" "$(stat -c '%a' "$credential_dir")" "$credential_dir" >>"$MODES"
 EOF
-chmod 700 "$BIN/ssh" "$BIN/scp"
+cat >"$BIN/failing-ssh" <<EOF
+#!/usr/bin/env bash
+"$BIN/ssh" "\$@"
+exit 1
+EOF
+chmod 700 "$BIN/ssh" "$BIN/scp" "$BIN/failing-ssh"
 
 files=(
   niiet-riscv-toolchain-linux-x86_64.tar.gz
@@ -104,8 +115,8 @@ base_env=(
 
 for required in BEGET_HOST BEGET_PORT BEGET_USER BEGET_SSH_PRIVATE_KEY BEGET_KNOWN_HOSTS GITHUB_REPOSITORY GITHUB_RUN_ID GITHUB_RUN_ATTEMPT RUNNER_TEMP; do
   without_env "$required"
-  expect_failure env "${filtered_env[@]}" "$DEPLOY" "$BUNDLE"
-  expect_failure env "${base_env[@]}" "$required=" "$DEPLOY" "$BUNDLE"
+  expect_failure run_clean "${filtered_env[@]}" "$DEPLOY" "$BUNDLE"
+  expect_failure run_clean "${base_env[@]}" "$required=" "$DEPLOY" "$BUNDLE"
 done
 
 for bad in \
@@ -116,18 +127,18 @@ for bad in \
   'GITHUB_REPOSITORY=phlyash/not-riscv-toolchain' \
   'GITHUB_RUN_ID=12/3' \
   'GITHUB_RUN_ATTEMPT=two'; do
-  expect_failure env "${base_env[@]}" "$bad" "$DEPLOY" "$BUNDLE"
+  expect_failure run_clean "${base_env[@]}" "$bad" "$DEPLOY" "$BUNDLE"
 done
 
 mv "$BUNDLE/release.json" "$TMP/release.json"
-expect_failure env "${base_env[@]}" "$DEPLOY" "$BUNDLE"
+expect_failure run_clean "${base_env[@]}" "$DEPLOY" "$BUNDLE"
 mv "$TMP/release.json" "$BUNDLE/release.json"
 printf 'unexpected\n' >"$BUNDLE/eighth-file"
-expect_failure env "${base_env[@]}" "$DEPLOY" "$BUNDLE"
+expect_failure run_clean "${base_env[@]}" "$DEPLOY" "$BUNDLE"
 rm "$BUNDLE/eighth-file"
 mv "$BUNDLE/release.json" "$TMP/release.json"
 ln -s "$TMP/release.json" "$BUNDLE/release.json"
-expect_failure env "${base_env[@]}" "$DEPLOY" "$BUNDLE"
+expect_failure run_clean "${base_env[@]}" "$DEPLOY" "$BUNDLE"
 rm "$BUNDLE/release.json"
 mv "$TMP/release.json" "$BUNDLE/release.json"
 
@@ -139,20 +150,21 @@ printf 'attacker known-hosts sentinel\n' >"$ATTACKER_KNOWN_HOSTS"
 mkdir "$PRESEEDED_DIR"
 ln -s "$ATTACKER_KEY" "$PRESEEDED_DIR/deploy_key"
 ln -s "$ATTACKER_KNOWN_HOSTS" "$PRESEEDED_DIR/known_hosts"
-output=$(env "${base_env[@]}" "$DEPLOY" "$BUNDLE" 2>&1) || fail "valid deployment failed: $output"
+output=$(run_clean "${base_env[@]}" "$DEPLOY" "$BUNDLE" 2>&1) || fail "valid deployment failed: $output"
 
 [[ $(<"$ATTACKER_KEY") == 'attacker key sentinel' ]] || fail 'preseeded key symlink was overwritten'
 [[ $(<"$ATTACKER_KNOWN_HOSTS") == 'attacker known-hosts sentinel' ]] || fail 'preseeded known-hosts symlink was overwritten'
 [[ $output != *"$key"* ]] || fail 'private key leaked through normal output'
 [[ $(<"$CAPTURE") != *"$key"* ]] || fail 'private key leaked through transport arguments'
 
-while read -r key_mode key_path hosts_mode hosts_path; do
+while read -r key_mode key_path hosts_mode hosts_path directory_mode credential_dir; do
   [[ $key_mode == 600 && $hosts_mode == 600 ]] || fail 'credential files are not mode 600 during transport'
+  [[ $directory_mode == 700 ]] || fail 'credential directory is not mode 700 during transport'
   [[ $key_path == "$RUNNER_TEMP"/aspect-ssh.*/* ]] || fail 'credential path is predictable'
   [[ $hosts_path == "$RUNNER_TEMP"/aspect-ssh.*/* ]] || fail 'known-hosts path is predictable'
   [[ ! -e $key_path && ! -e $hosts_path ]] || fail 'credential files were not removed after transport'
 done <"$MODES"
-read -r _ SSH_KEY_PATH _ SSH_KNOWN_HOSTS_PATH <"$MODES"
+read -r _ SSH_KEY_PATH _ SSH_KNOWN_HOSTS_PATH _ _ <"$MODES"
 
 mapfile -t calls <"$CAPTURE"
 [[ ${#calls[@]} == 3 ]] || fail "expected three transport calls, got ${#calls[@]}"
@@ -168,6 +180,14 @@ done
 expected_scp+=' baglayt2_aspect@example.invalid:aspect-upload/123-2/ '
 [[ ${calls[1]} == "$expected_scp" ]] || fail "unexpected scp call: ${calls[1]}"
 
+: >"$CAPTURE"
+: >"$MODES"
+expect_failure run_clean "${base_env[@]}" "SSH_BIN=$BIN/failing-ssh" "$DEPLOY" "$BUNDLE"
+read -r failed_key_mode failed_key_path failed_hosts_mode failed_hosts_path failed_directory_mode failed_credential_dir <"$MODES"
+[[ $failed_key_mode == 600 && $failed_hosts_mode == 600 ]] || fail 'failed transport credentials are not mode 600 during transport'
+[[ $failed_directory_mode == 700 ]] || fail 'failed transport credential directory is not mode 700 during transport'
+[[ ! -e $failed_key_path && ! -e $failed_hosts_path && ! -e $failed_credential_dir ]] || fail 'credential directory was not removed after failed transport'
+
 HOSTILE_BUNDLE="$TMP/-bundle:host"
 mkdir "$HOSTILE_BUNDLE"
 for file in "${files[@]}"; do
@@ -175,7 +195,7 @@ for file in "${files[@]}"; do
 done
 : >"$CAPTURE"
 : >"$MODES"
-(cd "$TMP" && env "${base_env[@]}" "$DEPLOY" '-bundle:host') || fail 'relative hostile bundle deployment failed'
+(cd "$TMP" && run_clean "${base_env[@]}" "$DEPLOY" '-bundle:host') || fail 'relative hostile bundle deployment failed'
 mapfile -t hostile_calls <"$CAPTURE"
 [[ ${#hostile_calls[@]} == 3 ]] || fail "expected three hostile transport calls, got ${#hostile_calls[@]}"
 HOSTILE_ABSOLUTE=$(realpath -- "$HOSTILE_BUNDLE")
