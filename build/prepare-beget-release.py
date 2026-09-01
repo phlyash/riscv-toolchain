@@ -121,7 +121,7 @@ def main():
                 "os": operating_system,
                 "arch": architecture,
                 "archiv": archive_type,
-                "sha256": sha256(source_file),
+                "sha256": sha256(destination),
             }
         )
     write_manifest(

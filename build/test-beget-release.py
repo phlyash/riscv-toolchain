@@ -2,12 +2,14 @@
 """Integration tests for the compiler Beget incoming-bundle builder."""
 
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,12 +90,56 @@ class PrepareBegetReleaseTests(unittest.TestCase):
                     list(entry), ["name", "os", "arch", "archiv", "sha256"]
                 )
                 source_bytes = (source / entry["name"]).read_bytes()
-                self.assertEqual((output / entry["name"]).read_bytes(), source_bytes)
-                self.assertEqual(entry["sha256"], hashlib.sha256(source_bytes).hexdigest())
+                output_bytes = (output / entry["name"]).read_bytes()
+                self.assertEqual(output_bytes, source_bytes)
+                self.assertEqual(entry["sha256"], hashlib.sha256(output_bytes).hexdigest())
             self.assertEqual(
                 sorted(path.name for path in output.iterdir()),
                 sorted([*FILES, "release.json"]),
             )
+
+    def test_manifest_hash_describes_archive_copied_before_source_mutation(self):
+        """A post-copy source change must not alter the completed bundle checksum."""
+        specification = importlib.util.spec_from_file_location(
+            "prepare_beget_release", BUILDER
+        )
+        builder = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(builder)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+            name = "niiet-riscv-toolchain-linux-x86_64.tar.gz"
+            mutated_contents = b"mutated after archive copy\n"
+            real_copyfile = builder.shutil.copyfile
+
+            def copy_then_mutate(copy_source, destination):
+                result = real_copyfile(copy_source, destination)
+                if Path(copy_source).name == name:
+                    Path(copy_source).write_bytes(mutated_contents)
+                return result
+
+            arguments = [
+                str(BUILDER),
+                "--type", "compiler",
+                "--tag", "v1.2.3",
+                "--repository", "phlyash/riscv-toolchain",
+                "--run-id", "123456-1",
+                "--input", str(source),
+                "--output", str(output),
+            ]
+            with mock.patch.object(sys, "argv", arguments):
+                with mock.patch.object(
+                    builder.shutil, "copyfile", side_effect=copy_then_mutate
+                ):
+                    builder.main()
+
+            manifest = json.loads((output / "release.json").read_text())
+            entry = next(entry for entry in manifest["files"] if entry["name"] == name)
+            destination_hash = hashlib.sha256((output / name).read_bytes()).hexdigest()
+            source_hash = hashlib.sha256((source / name).read_bytes()).hexdigest()
+            self.assertEqual(entry["sha256"], destination_hash)
+            self.assertNotEqual(entry["sha256"], source_hash)
 
     def test_rejects_missing_windows_zip(self):
         """A partial release must not create a manifest declaring completion."""
