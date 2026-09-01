@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,57 @@ FILES = {
     "niiet-riscv-toolchain-windows-x86_64.tar.gz": ("windows", "x86_64", "tar.gz"),
     "niiet-riscv-toolchain-windows-x86_64.zip": ("windows", "x86_64", "zip"),
 }
+
+EXPECTED_DEPLOY_BEGET_JOB = """  deploy-beget:
+    name: Publish release to Beget
+    if: github.event_name == 'workflow_dispatch'
+    needs: release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: niiet-riscv-toolchain-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Prepare Beget bundle
+        run: >-
+          python3 build/prepare-beget-release.py
+          --type compiler
+          --tag "${{ inputs.release_tag }}"
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          --input release-assets
+          --output beget-upload
+
+      - name: Upload and publish on Beget
+        env:
+          BEGET_HOST: ${{ secrets.BEGET_HOST }}
+          BEGET_PORT: ${{ secrets.BEGET_PORT }}
+          BEGET_USER: ${{ secrets.BEGET_USER }}
+          BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}
+          BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}
+        run: bash build/deploy-beget-release.sh beget-upload
+"""
+
+
+def assert_deploy_beget_contract(test_case, workflow):
+    """Assert the deploy job carries the compiler release publishing contract."""
+    job_match = re.search(
+        r"(?ms)^  deploy-beget:\n.*?(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow
+    )
+    test_case.assertIsNotNone(job_match, "deploy-beget job is missing")
+    test_case.assertEqual(job_match.group(0), EXPECTED_DEPLOY_BEGET_JOB)
+
+
+def replace_in_deploy_beget_job(workflow, old, new):
+    """Return a workflow fixture with one deploy-beget job fragment replaced."""
+    marker = "\n  deploy-beget:\n"
+    before_job, job = workflow.split(marker, 1)
+    return before_job + marker + job.replace(old, new, 1)
 
 
 class PrepareBegetReleaseTests(unittest.TestCase):
@@ -194,53 +246,37 @@ class PrepareBegetReleaseTests(unittest.TestCase):
 
     def test_manual_release_deploy_job_builds_and_transports_same_run_artifacts(self):
         """A missing or unsafe post-release job must block the compiler publisher."""
-        workflow = NIIET_WORKFLOW.read_text()
-        marker = "\n  deploy-beget:\n"
-        self.assertIn(marker, workflow)
-        job = workflow[workflow.index(marker):]
+        assert_deploy_beget_contract(self, NIIET_WORKFLOW.read_text())
 
-        for required in (
-            "name: Publish release to Beget",
-            "if: github.event_name == 'workflow_dispatch'",
-            "needs: release",
-            "runs-on: ubuntu-24.04",
-            "uses: actions/checkout@v6",
-            "uses: actions/download-artifact@v8",
-            "pattern: niiet-riscv-toolchain-*",
-            "path: release-assets",
-            "merge-multiple: true",
-            "python3 build/prepare-beget-release.py",
-            "--type compiler",
-            '--tag "${{ inputs.release_tag }}"',
-            '--repository "$GITHUB_REPOSITORY"',
-            '--run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"',
-            "--input release-assets",
-            "--output beget-upload",
-            "bash build/deploy-beget-release.sh beget-upload",
-            "BEGET_HOST: ${{ secrets.BEGET_HOST }}",
-            "BEGET_PORT: ${{ secrets.BEGET_PORT }}",
-            "BEGET_USER: ${{ secrets.BEGET_USER }}",
-            "BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}",
-            "BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}",
-        ):
-            self.assertIn(required, job)
-        mapped_secrets = [
-            line.strip()
-            for line in job.splitlines()
-            if line.strip().startswith("BEGET_")
-        ]
-        self.assertEqual(
-            mapped_secrets,
-            [
-                "BEGET_HOST: ${{ secrets.BEGET_HOST }}",
-                "BEGET_PORT: ${{ secrets.BEGET_PORT }}",
-                "BEGET_USER: ${{ secrets.BEGET_USER }}",
-                "BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}",
-                "BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}",
-            ],
+    def test_deploy_contract_rejects_commented_job_if(self):
+        """Commenting manual-only gating must not be accepted as an active job field."""
+        workflow = replace_in_deploy_beget_job(
+            NIIET_WORKFLOW.read_text(),
+            "    if: github.event_name == 'workflow_dispatch'\n",
+            "    # if: github.event_name == 'workflow_dispatch'\n",
         )
-        self.assertNotIn("\n    permissions:", job)
-        self.assertNotIn("contents: write", job)
+        with self.assertRaises(AssertionError):
+            assert_deploy_beget_contract(self, workflow)
+
+    def test_deploy_contract_rejects_commented_job_needs(self):
+        """Commenting the release dependency must not be accepted as an active field."""
+        workflow = replace_in_deploy_beget_job(
+            NIIET_WORKFLOW.read_text(),
+            "    needs: release\n",
+            "    # needs: release\n",
+        )
+        with self.assertRaises(AssertionError):
+            assert_deploy_beget_contract(self, workflow)
+
+    def test_deploy_contract_rejects_action_only_mentioned_in_shell_text(self):
+        """An action name in a shell command must not substitute for an action step."""
+        workflow = replace_in_deploy_beget_job(
+            NIIET_WORKFLOW.read_text(),
+            "        uses: actions/download-artifact@v8\n",
+            "        run: echo 'uses: actions/download-artifact@v8'\n",
+        )
+        with self.assertRaises(AssertionError):
+            assert_deploy_beget_contract(self, workflow)
 
 
 if __name__ == "__main__":
