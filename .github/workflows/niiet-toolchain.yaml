@@ -489,3 +489,37 @@ jobs:
             --title "NIIET RISC-V Toolchain $RELEASE_TAG" \
             --generate-notes \
             --latest
+
+  deploy-beget:
+    name: Publish release to Beget
+    if: github.event_name == 'workflow_dispatch'
+    needs: release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: niiet-riscv-toolchain-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Prepare Beget bundle
+        run: >-
+          python3 build/prepare-beget-release.py
+          --type compiler
+          --tag "${{ inputs.release_tag }}"
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          --input release-assets
+          --output beget-upload
+
+      - name: Upload and publish on Beget
+        env:
+          BEGET_HOST: ${{ secrets.BEGET_HOST }}
+          BEGET_PORT: ${{ secrets.BEGET_PORT }}
+          BEGET_USER: ${{ secrets.BEGET_USER }}
+          BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}
+          BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}
+        run: bash build/deploy-beget-release.sh beget-upload

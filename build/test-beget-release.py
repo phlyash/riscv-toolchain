@@ -14,6 +14,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILDER = ROOT / "build" / "prepare-beget-release.py"
+NIIET_WORKFLOW = ROOT / ".github" / "workflows" / "niiet-toolchain.yaml"
 FILES = {
     "niiet-riscv-toolchain-linux-x86_64.tar.gz": ("linux", "x86_64", "tar.gz"),
     "niiet-riscv-toolchain-linux-x86_64.zip": ("linux", "x86_64", "zip"),
@@ -190,6 +191,56 @@ class PrepareBegetReleaseTests(unittest.TestCase):
             self.assert_failure_without_manifest(
                 self.run_builder(source, output, repository="phlyash/other-toolchain"), output
             )
+
+    def test_manual_release_deploy_job_builds_and_transports_same_run_artifacts(self):
+        """A missing or unsafe post-release job must block the compiler publisher."""
+        workflow = NIIET_WORKFLOW.read_text()
+        marker = "\n  deploy-beget:\n"
+        self.assertIn(marker, workflow)
+        job = workflow[workflow.index(marker):]
+
+        for required in (
+            "name: Publish release to Beget",
+            "if: github.event_name == 'workflow_dispatch'",
+            "needs: release",
+            "runs-on: ubuntu-24.04",
+            "uses: actions/checkout@v6",
+            "uses: actions/download-artifact@v8",
+            "pattern: niiet-riscv-toolchain-*",
+            "path: release-assets",
+            "merge-multiple: true",
+            "python3 build/prepare-beget-release.py",
+            "--type compiler",
+            '--tag "${{ inputs.release_tag }}"',
+            '--repository "$GITHUB_REPOSITORY"',
+            '--run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"',
+            "--input release-assets",
+            "--output beget-upload",
+            "bash build/deploy-beget-release.sh beget-upload",
+            "BEGET_HOST: ${{ secrets.BEGET_HOST }}",
+            "BEGET_PORT: ${{ secrets.BEGET_PORT }}",
+            "BEGET_USER: ${{ secrets.BEGET_USER }}",
+            "BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}",
+            "BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}",
+        ):
+            self.assertIn(required, job)
+        mapped_secrets = [
+            line.strip()
+            for line in job.splitlines()
+            if line.strip().startswith("BEGET_")
+        ]
+        self.assertEqual(
+            mapped_secrets,
+            [
+                "BEGET_HOST: ${{ secrets.BEGET_HOST }}",
+                "BEGET_PORT: ${{ secrets.BEGET_PORT }}",
+                "BEGET_USER: ${{ secrets.BEGET_USER }}",
+                "BEGET_SSH_PRIVATE_KEY: ${{ secrets.BEGET_SSH_PRIVATE_KEY }}",
+                "BEGET_KNOWN_HOSTS: ${{ secrets.BEGET_KNOWN_HOSTS }}",
+            ],
+        )
+        self.assertNotIn("\n    permissions:", job)
+        self.assertNotIn("contents: write", job)
 
 
 if __name__ == "__main__":
