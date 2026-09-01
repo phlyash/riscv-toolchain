@@ -17,7 +17,7 @@ done
   printf 'usage: %s BUNDLE_DIRECTORY\n' "$0" >&2
   exit 1
 }
-BUNDLE_DIR=$1
+BUNDLE_DIR=$(realpath -- "$1")
 
 [[ $BEGET_HOST =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ && $BEGET_HOST != *..* ]] || {
   printf 'unsafe BEGET_HOST\n' >&2
@@ -68,10 +68,10 @@ for index in "${!expected_sorted[@]}"; do
 done
 
 upload_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-SSH_DIR="$RUNNER_TEMP/aspect-ssh"
 umask 077
-mkdir -p "$SSH_DIR"
+SSH_DIR=$(mktemp -d "$RUNNER_TEMP/aspect-ssh.XXXXXX")
 chmod 700 "$SSH_DIR"
+trap 'rm -rf -- "$SSH_DIR"' EXIT
 printf '%s\n' "$BEGET_SSH_PRIVATE_KEY" >"$SSH_DIR/deploy_key"
 printf '%s\n' "$BEGET_KNOWN_HOSTS" >"$SSH_DIR/known_hosts"
 chmod 600 "$SSH_DIR/deploy_key" "$SSH_DIR/known_hosts"

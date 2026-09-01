@@ -29,6 +29,7 @@ BIN="$TMP/bin"
 BUNDLE="$TMP/bundle"
 RUNNER_TEMP="$TMP/runner"
 CAPTURE="$TMP/capture"
+MODES="$TMP/modes"
 mkdir -p "$BIN" "$BUNDLE" "$RUNNER_TEMP"
 
 cat >"$BIN/ssh" <<'EOF'
@@ -36,12 +37,38 @@ cat >"$BIN/ssh" <<'EOF'
 printf 'ssh ' >>"$CAPTURE"
 printf '%q ' "$@" >>"$CAPTURE"
 printf '\n' >>"$CAPTURE"
+key_path=
+known_hosts_path=
+while (($#)); do
+  case $1 in
+    -i) key_path=$2; shift 2 ;;
+    -o)
+      [[ $2 == UserKnownHostsFile=* ]] && known_hosts_path=${2#UserKnownHostsFile=}
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+printf '%s %s %s %s\n' "$(stat -c '%a' "$key_path")" "$key_path" "$(stat -c '%a' "$known_hosts_path")" "$known_hosts_path" >>"$MODES"
 EOF
 cat >"$BIN/scp" <<'EOF'
 #!/usr/bin/env bash
 printf 'scp ' >>"$CAPTURE"
 printf '%q ' "$@" >>"$CAPTURE"
 printf '\n' >>"$CAPTURE"
+key_path=
+known_hosts_path=
+while (($#)); do
+  case $1 in
+    -i) key_path=$2; shift 2 ;;
+    -o)
+      [[ $2 == UserKnownHostsFile=* ]] && known_hosts_path=${2#UserKnownHostsFile=}
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+printf '%s %s %s %s\n' "$(stat -c '%a' "$key_path")" "$key_path" "$(stat -c '%a' "$known_hosts_path")" "$known_hosts_path" >>"$MODES"
 EOF
 chmod 700 "$BIN/ssh" "$BIN/scp"
 
@@ -72,6 +99,7 @@ base_env=(
   "SSH_BIN=$BIN/ssh"
   "SCP_BIN=$BIN/scp"
   "CAPTURE=$CAPTURE"
+  "MODES=$MODES"
 )
 
 for required in BEGET_HOST BEGET_PORT BEGET_USER BEGET_SSH_PRIVATE_KEY BEGET_KNOWN_HOSTS GITHUB_REPOSITORY GITHUB_RUN_ID GITHUB_RUN_ATTEMPT RUNNER_TEMP; do
@@ -103,26 +131,57 @@ expect_failure env "${base_env[@]}" "$DEPLOY" "$BUNDLE"
 rm "$BUNDLE/release.json"
 mv "$TMP/release.json" "$BUNDLE/release.json"
 
+PRESEEDED_DIR="$RUNNER_TEMP/aspect-ssh"
+ATTACKER_KEY="$TMP/attacker-key"
+ATTACKER_KNOWN_HOSTS="$TMP/attacker-known-hosts"
+printf 'attacker key sentinel\n' >"$ATTACKER_KEY"
+printf 'attacker known-hosts sentinel\n' >"$ATTACKER_KNOWN_HOSTS"
+mkdir "$PRESEEDED_DIR"
+ln -s "$ATTACKER_KEY" "$PRESEEDED_DIR/deploy_key"
+ln -s "$ATTACKER_KNOWN_HOSTS" "$PRESEEDED_DIR/known_hosts"
 output=$(env "${base_env[@]}" "$DEPLOY" "$BUNDLE" 2>&1) || fail "valid deployment failed: $output"
 
-SSH_DIR="$RUNNER_TEMP/aspect-ssh"
-[[ $(stat -c '%a' "$SSH_DIR/deploy_key") == 600 ]] || fail 'private key mode is not 600'
-[[ $(stat -c '%a' "$SSH_DIR/known_hosts") == 600 ]] || fail 'known-hosts mode is not 600'
+[[ $(<"$ATTACKER_KEY") == 'attacker key sentinel' ]] || fail 'preseeded key symlink was overwritten'
+[[ $(<"$ATTACKER_KNOWN_HOSTS") == 'attacker known-hosts sentinel' ]] || fail 'preseeded known-hosts symlink was overwritten'
 [[ $output != *"$key"* ]] || fail 'private key leaked through normal output'
 [[ $(<"$CAPTURE") != *"$key"* ]] || fail 'private key leaked through transport arguments'
 
+while read -r key_mode key_path hosts_mode hosts_path; do
+  [[ $key_mode == 600 && $hosts_mode == 600 ]] || fail 'credential files are not mode 600 during transport'
+  [[ $key_path == "$RUNNER_TEMP"/aspect-ssh.*/* ]] || fail 'credential path is predictable'
+  [[ $hosts_path == "$RUNNER_TEMP"/aspect-ssh.*/* ]] || fail 'known-hosts path is predictable'
+  [[ ! -e $key_path && ! -e $hosts_path ]] || fail 'credential files were not removed after transport'
+done <"$MODES"
+read -r _ SSH_KEY_PATH _ SSH_KNOWN_HOSTS_PATH <"$MODES"
+
 mapfile -t calls <"$CAPTURE"
 [[ ${#calls[@]} == 3 ]] || fail "expected three transport calls, got ${#calls[@]}"
-expected_ssh_options="-p 2222 -i $SSH_DIR/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_DIR/known_hosts"
+expected_ssh_options="-p 2222 -i $SSH_KEY_PATH -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH"
 [[ ${calls[0]} == "ssh $expected_ssh_options baglayt2_aspect@example.invalid aspect-publisher\\ prepare\\ 123-2 " ]] || fail "unexpected prepare call: ${calls[0]}"
 [[ ${calls[2]} == "ssh $expected_ssh_options baglayt2_aspect@example.invalid aspect-publisher\\ publish\\ 123-2 " ]] || fail "unexpected publish call: ${calls[2]}"
 
-expected_scp="scp -P 2222 -i $SSH_DIR/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_DIR/known_hosts -O"
+expected_scp="scp -P 2222 -i $SSH_KEY_PATH -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH -O"
 mapfile -t sorted_files < <(printf '%s\n' "${files[@]}" | sort)
 for file in "${sorted_files[@]}"; do
   expected_scp+=" $BUNDLE/$file"
 done
 expected_scp+=' baglayt2_aspect@example.invalid:aspect-upload/123-2/ '
 [[ ${calls[1]} == "$expected_scp" ]] || fail "unexpected scp call: ${calls[1]}"
+
+HOSTILE_BUNDLE="$TMP/-bundle:host"
+mkdir "$HOSTILE_BUNDLE"
+for file in "${files[@]}"; do
+  printf '%s\n' "$file" >"$HOSTILE_BUNDLE/$file"
+done
+: >"$CAPTURE"
+: >"$MODES"
+(cd "$TMP" && env "${base_env[@]}" "$DEPLOY" '-bundle:host') || fail 'relative hostile bundle deployment failed'
+mapfile -t hostile_calls <"$CAPTURE"
+[[ ${#hostile_calls[@]} == 3 ]] || fail "expected three hostile transport calls, got ${#hostile_calls[@]}"
+HOSTILE_ABSOLUTE=$(realpath -- "$HOSTILE_BUNDLE")
+for file in "${sorted_files[@]}"; do
+  [[ ${hostile_calls[1]} == *" $HOSTILE_ABSOLUTE/$file "* ]] || fail "scp local path is not canonical and absolute: $file"
+done
+[[ ${hostile_calls[1]} != *' -bundle:host/'* ]] || fail 'scp received a hostile relative local path'
 
 printf 'PASS: deploy Beget transport contract\n'
