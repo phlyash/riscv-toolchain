@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Integration tests for the compiler Beget incoming-bundle builder."""
+
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parent.parent
+BUILDER = ROOT / "build" / "prepare-beget-release.py"
+FILES = {
+    "niiet-riscv-toolchain-linux-x86_64.tar.gz": ("linux", "x86_64", "tar.gz"),
+    "niiet-riscv-toolchain-linux-x86_64.zip": ("linux", "x86_64", "zip"),
+    "niiet-riscv-toolchain-macos-aarch64.tar.gz": ("darwin", "aarch64", "tar.gz"),
+    "niiet-riscv-toolchain-macos-aarch64.zip": ("darwin", "aarch64", "zip"),
+    "niiet-riscv-toolchain-windows-x86_64.tar.gz": ("windows", "x86_64", "tar.gz"),
+    "niiet-riscv-toolchain-windows-x86_64.zip": ("windows", "x86_64", "zip"),
+}
+
+
+class PrepareBegetReleaseTests(unittest.TestCase):
+    """Tests for contract-visible bundle output and input rejection."""
+
+    def make_input(self, directory):
+        source = Path(directory) / "input"
+        source.mkdir()
+        for index, name in enumerate(FILES):
+            (source / name).write_bytes(("archive-%d\n" % index).encode() * 100)
+        return source
+
+    def run_builder(self, source, output, **overrides):
+        options = {
+            "type": "compiler",
+            "tag": "v1.2.3",
+            "repository": "phlyash/riscv-toolchain",
+            "run_id": "123456-1",
+        }
+        options.update(overrides)
+        return subprocess.run(
+            [
+                sys.executable,
+                str(BUILDER),
+                "--type", options["type"],
+                "--tag", options["tag"],
+                "--repository", options["repository"],
+                "--run-id", options["run_id"],
+                "--input", str(source),
+                "--output", str(output),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def assert_failure_without_manifest(self, result, output):
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((output / "release.json").exists())
+
+    def test_builds_ordered_manifest_and_byte_identical_archives(self):
+        """A wrong mapping, hash, key order, or copy breaks the public bundle contract."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+            result = self.run_builder(source, output)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            manifest = json.loads((output / "release.json").read_text())
+            self.assertEqual(
+                list(manifest),
+                ["schema", "type", "version", "repository", "run_id", "files"],
+            )
+            self.assertEqual(manifest["schema"], 1)
+            self.assertEqual(manifest["type"], "compiler")
+            self.assertEqual(manifest["version"], "1.2.3")
+            self.assertEqual(manifest["repository"], "phlyash/riscv-toolchain")
+            self.assertEqual(manifest["run_id"], "123456-1")
+            self.assertEqual([entry["name"] for entry in manifest["files"]], list(FILES))
+            self.assertEqual(
+                [(entry["os"], entry["arch"], entry["archiv"]) for entry in manifest["files"]],
+                list(FILES.values()),
+            )
+            for entry in manifest["files"]:
+                self.assertEqual(
+                    list(entry), ["name", "os", "arch", "archiv", "sha256"]
+                )
+                source_bytes = (source / entry["name"]).read_bytes()
+                self.assertEqual((output / entry["name"]).read_bytes(), source_bytes)
+                self.assertEqual(entry["sha256"], hashlib.sha256(source_bytes).hexdigest())
+            self.assertEqual(
+                sorted(path.name for path in output.iterdir()),
+                sorted([*FILES, "release.json"]),
+            )
+
+    def test_rejects_missing_windows_zip(self):
+        """A partial release must not create a manifest declaring completion."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            (source / "niiet-riscv-toolchain-windows-x86_64.zip").unlink()
+            output = Path(temporary) / "output"
+            self.assert_failure_without_manifest(self.run_builder(source, output), output)
+
+    def test_rejects_unexpected_seventh_file(self):
+        """An unrecognised artifact must not enter the incoming directory."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            (source / "unexpected.txt").write_text("unexpected")
+            output = Path(temporary) / "output"
+            self.assert_failure_without_manifest(self.run_builder(source, output), output)
+
+    def test_rejects_unsafe_tag(self):
+        """A path-like version must not become a published catalog version."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+            self.assert_failure_without_manifest(
+                self.run_builder(source, output, tag="../1.2.3"), output
+            )
+
+    def test_rejects_output_inside_input(self):
+        """Source and destination overlap must not alter the validated input set."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = source / "output"
+            self.assert_failure_without_manifest(self.run_builder(source, output), output)
+
+    def test_rejects_unsupported_type(self):
+        """The compiler builder must not be usable for another package profile."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+            self.assert_failure_without_manifest(
+                self.run_builder(source, output, type="openocd"), output
+            )
+
+    def test_rejects_safe_but_wrong_repository(self):
+        """The forced compiler publisher identity accepts only this repository."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+            self.assert_failure_without_manifest(
+                self.run_builder(source, output, repository="phlyash/other-toolchain"), output
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
