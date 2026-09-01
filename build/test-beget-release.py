@@ -4,6 +4,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -41,10 +42,12 @@ EXPECTED_DEPLOY_BEGET_JOB = """  deploy-beget:
           merge-multiple: true
 
       - name: Prepare Beget bundle
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: >-
           python3 build/prepare-beget-release.py
           --type compiler
-          --tag "${{ inputs.release_tag }}"
+          --tag "$RELEASE_TAG"
           --repository "$GITHUB_REPOSITORY"
           --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           --input release-assets
@@ -75,6 +78,18 @@ def replace_in_deploy_beget_job(workflow, old, new):
     marker = "\n  deploy-beget:\n"
     before_job, job = workflow.split(marker, 1)
     return before_job + marker + job.replace(old, new, 1)
+
+
+def expected_summary(manifest):
+    """Return the sanitized manifest-derived log lines required on success."""
+    return [
+        "Prepared bundle: type=%s version=%s" % (manifest["type"], manifest["version"]),
+        *[
+            "profile=%s/%s/%s sha256=%s"
+            % (entry["os"], entry["arch"], entry["archiv"], entry["sha256"])
+            for entry in manifest["files"]
+        ],
+    ]
 
 
 class PrepareBegetReleaseTests(unittest.TestCase):
@@ -150,6 +165,7 @@ class PrepareBegetReleaseTests(unittest.TestCase):
                 sorted(path.name for path in output.iterdir()),
                 sorted([*FILES, "release.json"]),
             )
+            self.assertEqual(result.stdout.splitlines(), expected_summary(manifest))
 
     def test_manifest_hash_describes_archive_copied_before_source_mutation(self):
         """A post-copy source change must not alter the completed bundle checksum."""
@@ -310,6 +326,87 @@ class PrepareBegetReleaseTests(unittest.TestCase):
     def test_manual_release_deploy_job_builds_and_transports_same_run_artifacts(self):
         """A missing or unsafe post-release job must block the compiler publisher."""
         assert_deploy_beget_contract(self, NIIET_WORKFLOW.read_text())
+
+    def test_deploy_contract_rejects_direct_release_tag_shell_interpolation(self):
+        """A manual tag must enter the shell only through the exact step environment."""
+        workflow = replace_in_deploy_beget_job(
+            NIIET_WORKFLOW.read_text(),
+            '        env:\n          RELEASE_TAG: ${{ inputs.release_tag }}\n',
+            '',
+        )
+        workflow = replace_in_deploy_beget_job(
+            workflow,
+            '--tag "$RELEASE_TAG"',
+            '--tag "${{ inputs.release_tag }}"',
+        )
+        with self.assertRaises(AssertionError):
+            assert_deploy_beget_contract(self, workflow)
+
+    def test_deploy_contract_rejects_unquoted_release_tag_shell_variable(self):
+        """An unquoted tag variable would allow shell word splitting before validation."""
+        workflow = replace_in_deploy_beget_job(
+            NIIET_WORKFLOW.read_text(),
+            '--tag "$RELEASE_TAG"',
+            '--tag $RELEASE_TAG',
+        )
+        with self.assertRaises(AssertionError):
+            assert_deploy_beget_contract(self, workflow)
+
+    def test_safe_workflow_shell_shape_rejects_malicious_tag_without_marker(self):
+        """A quote/$() tag is one rejected builder argument and cannot execute shell code."""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = self.make_input(temporary)
+            output = Path(temporary) / "output"
+            marker = Path(temporary) / "shell-marker"
+            executable_directory = Path(temporary) / "bin"
+            executable_directory.mkdir()
+            argument_capture = Path(temporary) / "python-arguments"
+            python_wrapper = executable_directory / "python3"
+            python_wrapper.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$@\" >\"$ARGUMENT_CAPTURE\"\n"
+                "exec \"$REAL_PYTHON\" \"$@\"\n"
+            )
+            python_wrapper.chmod(0o700)
+            malicious_tag = 'v1.2.3"; touch "$MARKER"; $(touch "$MARKER"); #'
+            environment = {
+                **os.environ,
+                "RELEASE_TAG": malicious_tag,
+                "MARKER": str(marker),
+                "INPUT": str(source),
+                "OUTPUT": str(output),
+                "ARGUMENT_CAPTURE": str(argument_capture),
+                "REAL_PYTHON": sys.executable,
+                "PATH": str(executable_directory) + os.pathsep + os.environ["PATH"],
+            }
+            command = '''python3 build/prepare-beget-release.py \\
+  --type compiler \\
+  --tag "$RELEASE_TAG" \\
+  --repository "$GITHUB_REPOSITORY" \\
+  --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \\
+  --input "$INPUT" \\
+  --output "$OUTPUT"'''
+            result = subprocess.run(
+                ["bash", "-c", command],
+                cwd=ROOT,
+                env={
+                    **environment,
+                    "GITHUB_REPOSITORY": "phlyash/riscv-toolchain",
+                    "GITHUB_RUN_ID": "123456",
+                    "GITHUB_RUN_ATTEMPT": "1",
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(argument_capture.exists(), result.stdout + result.stderr)
+            arguments = argument_capture.read_text().splitlines()
+            self.assertEqual(arguments[arguments.index("--tag") + 1], malicious_tag)
+            self.assertEqual(arguments.count(malicious_tag), 1)
+            self.assertFalse(marker.exists())
+            self.assertFalse((output / "release.json").exists())
+            self.assertNotIn(malicious_tag, result.stdout + result.stderr)
 
     def test_deploy_contract_rejects_commented_job_if(self):
         """Commenting manual-only gating must not be accepted as an active job field."""

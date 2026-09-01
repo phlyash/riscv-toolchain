@@ -124,17 +124,21 @@ def main():
                 "sha256": sha256(destination),
             }
         )
-    write_manifest(
-        output,
-        {
-            "schema": 1,
-            "type": "compiler",
-            "version": version,
-            "repository": arguments.repository,
-            "run_id": arguments.run_id,
-            "files": files,
-        },
-    )
+    manifest = {
+        "schema": 1,
+        "type": "compiler",
+        "version": version,
+        "repository": arguments.repository,
+        "run_id": arguments.run_id,
+        "files": files,
+    }
+    write_manifest(output, manifest)
+    print("Prepared bundle: type=%s version=%s" % (manifest["type"], manifest["version"]))
+    for entry in manifest["files"]:
+        print(
+            "profile=%s/%s/%s sha256=%s"
+            % (entry["os"], entry["arch"], entry["archiv"], entry["sha256"])
+        )
 
 
 if __name__ == "__main__":
