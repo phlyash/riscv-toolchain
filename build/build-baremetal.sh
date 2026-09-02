@@ -250,6 +250,36 @@ stage_clang_cross() {
     local PY="$1"
     local LLVM_DIST="$2"
     local NAT="$WORK/llvm-native-tblgen"
+    local llvm_mingw_root="${LLVM_MINGW_ROOT:-}"
+    local tool
+
+    if [ -z "$llvm_mingw_root" ]; then
+        echo "LLVM_MINGW_ROOT is required for the Windows LLVM build" >&2
+        return 1
+    fi
+
+    case "$llvm_mingw_root" in
+        /*) ;;
+        *)
+            echo "LLVM_MINGW_ROOT must be an absolute path: $llvm_mingw_root" >&2
+            return 1
+            ;;
+    esac
+
+    for tool in \
+        x86_64-w64-mingw32-clang \
+        x86_64-w64-mingw32-clang++ \
+        x86_64-w64-mingw32-windres \
+        llvm-ar \
+        llvm-ranlib \
+        llvm-strip; do
+        if [ ! -x "$llvm_mingw_root/bin/$tool" ]; then
+            echo "llvm-mingw is missing executable: $llvm_mingw_root/bin/$tool" >&2
+            return 1
+        fi
+    done
+
+    llvm_mingw_root="$(cd "$llvm_mingw_root" && pwd -P)"
 
     if [ ! -x "$NAT/bin/llvm-tblgen" ] || [ ! -x "$NAT/bin/clang-tblgen" ]; then
         log "native tblgen pre-pass for LLVM cross -> $NAT"
@@ -277,15 +307,18 @@ stage_clang_cross() {
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$PREFIX" \
         -DCMAKE_SYSTEM_NAME=Windows \
-        -DCMAKE_C_COMPILER="${WITH_HOST}-gcc" \
-        -DCMAKE_CXX_COMPILER="${WITH_HOST}-g++" \
-        -DCMAKE_RC_COMPILER="${WITH_HOST}-windres" \
-        -DCMAKE_STRIP="${WITH_HOST}-strip" \
+        -DCMAKE_C_COMPILER="$llvm_mingw_root/bin/x86_64-w64-mingw32-clang" \
+        -DCMAKE_CXX_COMPILER="$llvm_mingw_root/bin/x86_64-w64-mingw32-clang++" \
+        -DCMAKE_RC_COMPILER="$llvm_mingw_root/bin/x86_64-w64-mingw32-windres" \
+        -DCMAKE_AR="$llvm_mingw_root/bin/llvm-ar" \
+        -DCMAKE_RANLIB="$llvm_mingw_root/bin/llvm-ranlib" \
+        -DCMAKE_STRIP="$llvm_mingw_root/bin/llvm-strip" \
         -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
         -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
         -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
-        -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
-        -DCMAKE_SHARED_LINKER_FLAGS="-static -static-libgcc -static-libstdc++" \
+        -DCMAKE_EXE_LINKER_FLAGS=-static \
+        -DCMAKE_SHARED_LINKER_FLAGS=-static \
+        -DCMAKE_MODULE_LINKER_FLAGS=-static \
         -DLLVM_HOST_TRIPLE="${WITH_HOST/-w64-mingw32/-w64-windows-gnu}" \
         -DLLVM_NATIVE_TOOL_DIR="$NAT/bin" \
         -DPython3_EXECUTABLE="$PY" \

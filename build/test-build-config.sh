@@ -14,6 +14,7 @@ fi
 FAKE_BIN="$TMP/bin"
 FAKE_SRC="$TMP/src"
 FAKE_DEPS="$TMP/deps"
+FAKE_LLVM_MINGW="$TMP/llvm-mingw"
 CAPTURE_DIR="$TMP/capture"
 
 mkdir -p \
@@ -23,6 +24,7 @@ mkdir -p \
     "$FAKE_SRC/llvm/llvm" \
     "$FAKE_DEPS/include" \
     "$FAKE_DEPS/lib" \
+    "$FAKE_LLVM_MINGW/bin" \
     "$CAPTURE_DIR"
 
 export CAPTURE_DIR FAKE_DEPS
@@ -58,6 +60,11 @@ EOF
 cat > "$FAKE_BIN/python3" <<'EOF'
 #!/usr/bin/env bash
 exit 0
+EOF
+
+cat > "$FAKE_BIN/file" <<'EOF'
+#!/usr/bin/env bash
+printf 'PE32+ executable (console) x86-64\n'
 EOF
 
 cat > "$FAKE_BIN/make" <<'EOF'
@@ -115,6 +122,17 @@ printf '%s\n' "$FAKE_DEPS"
 EOF
 
 chmod +x "$FAKE_BIN"/* "$FAKE_SRC/configure"
+
+for tool in \
+    x86_64-w64-mingw32-clang \
+    x86_64-w64-mingw32-clang++ \
+    x86_64-w64-mingw32-windres \
+    llvm-ar \
+    llvm-ranlib \
+    llvm-strip; do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_LLVM_MINGW/bin/$tool"
+    chmod +x "$FAKE_LLVM_MINGW/bin/$tool"
+done
 
 fail() {
     echo "FAIL: $*" >&2
@@ -205,8 +223,31 @@ run_windows_gcc() {
     WORK="$work" \
     PREFIX="$prefix" \
     OUT="$TMP/out" \
+    LLVM_MINGW_ROOT="$TMP/does-not-exist" \
     WITH_HOST=x86_64-w64-mingw32 \
         bash "$ROOT/build/build-baremetal.sh" gcc >/dev/null
+}
+
+run_windows_clang() {
+    local prefix="$TMP/prefix-windows-clang"
+    local work="$TMP/work-windows-clang"
+
+    mkdir -p "$work/llvm-native-tblgen/bin"
+    for tool in llvm-tblgen clang-tblgen; do
+        printf '#!/usr/bin/env bash\nexit 0\n' \
+            > "$work/llvm-native-tblgen/bin/$tool"
+        chmod +x "$work/llvm-native-tblgen/bin/$tool"
+    done
+
+    PATH="$FAKE_BIN:$PATH" \
+    SRC="$FAKE_SRC" \
+    SOURCES="$TMP/sources" \
+    WORK="$work" \
+    PREFIX="$prefix" \
+    OUT="$TMP/out" \
+    LLVM_MINGW_ROOT="$FAKE_LLVM_MINGW" \
+    WITH_HOST=x86_64-w64-mingw32 \
+        bash "$ROOT/build/build-baremetal.sh" clang >/dev/null
 }
 
 test_linux_gcc_disables_libcc1() {
@@ -323,6 +364,82 @@ test_windows_gdb_statically_links_winpthread() {
     }
 }
 
+test_windows_clang_uses_pinned_llvm_mingw() {
+    local variable tool expected no_root_status incomplete_status
+    local incomplete_root="$TMP/incomplete-llvm-mingw"
+
+    run_windows_clang
+
+    while IFS=' ' read -r variable tool; do
+        expected="-$variable=$FAKE_LLVM_MINGW/bin/$tool"
+        grep -Fxq -- "$expected" "$CAPTURE_DIR/cmake.args" || {
+            cat "$CAPTURE_DIR/cmake.args" >&2
+            fail "Windows LLVM configuration is missing $expected"
+        }
+    done <<'EOF'
+DCMAKE_C_COMPILER x86_64-w64-mingw32-clang
+DCMAKE_CXX_COMPILER x86_64-w64-mingw32-clang++
+DCMAKE_RC_COMPILER x86_64-w64-mingw32-windres
+DCMAKE_AR llvm-ar
+DCMAKE_RANLIB llvm-ranlib
+DCMAKE_STRIP llvm-strip
+EOF
+
+    for expected in \
+        '-DLLVM_HOST_TRIPLE=x86_64-w64-windows-gnu' \
+        '-DCMAKE_EXE_LINKER_FLAGS=-static' \
+        '-DCMAKE_SHARED_LINKER_FLAGS=-static' \
+        '-DCMAKE_MODULE_LINKER_FLAGS=-static'; do
+        grep -Fxq -- "$expected" "$CAPTURE_DIR/cmake.args" || {
+            cat "$CAPTURE_DIR/cmake.args" >&2
+            fail "Windows LLVM configuration is missing $expected"
+        }
+    done
+
+    if grep -Eq -- \
+        '^-DCMAKE_(C|CXX)_COMPILER=.*x86_64-w64-mingw32-(gcc|g\+\+)$' \
+        "$CAPTURE_DIR/cmake.args"; then
+        cat "$CAPTURE_DIR/cmake.args" >&2
+        fail "Windows LLVM still uses the GNU MinGW compiler driver"
+    fi
+
+    set +e
+    env -u LLVM_MINGW_ROOT \
+        PATH="$FAKE_BIN:$PATH" \
+        SRC="$FAKE_SRC" \
+        SOURCES="$TMP/sources" \
+        WORK="$TMP/work-windows-clang-no-root" \
+        PREFIX="$TMP/prefix-windows-clang-no-root" \
+        OUT="$TMP/out" \
+        WITH_HOST=x86_64-w64-mingw32 \
+        bash "$ROOT/build/build-baremetal.sh" clang >/dev/null 2>&1
+    no_root_status=$?
+    set -e
+
+    [ "$no_root_status" -ne 0 ] ||
+        fail "Windows LLVM accepted a missing LLVM_MINGW_ROOT"
+
+    mkdir -p "$incomplete_root/bin"
+    cp "$FAKE_LLVM_MINGW/bin/x86_64-w64-mingw32-clang" \
+        "$incomplete_root/bin/"
+
+    set +e
+    PATH="$FAKE_BIN:$PATH" \
+    SRC="$FAKE_SRC" \
+    SOURCES="$TMP/sources" \
+    WORK="$TMP/work-windows-clang-incomplete-root" \
+    PREFIX="$TMP/prefix-windows-clang-incomplete-root" \
+    OUT="$TMP/out" \
+    LLVM_MINGW_ROOT="$incomplete_root" \
+    WITH_HOST=x86_64-w64-mingw32 \
+        bash "$ROOT/build/build-baremetal.sh" clang >/dev/null 2>&1
+    incomplete_status=$?
+    set -e
+
+    [ "$incomplete_status" -ne 0 ] ||
+        fail "Windows LLVM accepted an incomplete llvm-mingw root"
+}
+
 run_test() {
     local name="$1"
     "$name"
@@ -342,14 +459,18 @@ case "$TEST_CASE" in
     windows-gdb-static-winpthread)
         run_test test_windows_gdb_statically_links_winpthread
         ;;
+    windows-clang-llvm-mingw)
+        run_test test_windows_clang_uses_pinned_llvm_mingw
+        ;;
     all)
         run_test test_linux_gcc_disables_libcc1
         run_test test_linux_clang_statically_links_libgcc
         run_test test_macos_clang_works_with_empty_static_link_flags
         run_test test_windows_gdb_statically_links_winpthread
+        run_test test_windows_clang_uses_pinned_llvm_mingw
         ;;
     *)
-        echo "usage: $0 {linux-gcc-no-libcc1|linux-clang-static-libgcc|macos-clang-no-static-gcc-flags|windows-gdb-static-winpthread|all}" >&2
+        echo "usage: $0 {linux-gcc-no-libcc1|linux-clang-static-libgcc|macos-clang-no-static-gcc-flags|windows-gdb-static-winpthread|windows-clang-llvm-mingw|all}" >&2
         exit 2
         ;;
 esac
