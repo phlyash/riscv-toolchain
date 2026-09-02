@@ -36,8 +36,10 @@ The native build passes `--with-expat=$DEPS`, although GDB treats
 `--with-libexpat-prefix=DIR` option for a dependency prefix. Because the
 non-boolean path value is not `yes`, a failed probe is only a warning and the
 build succeeds without XML. The fix must use `--with-expat=yes`,
-`--with-libexpat-prefix=$DEPS`, and `--with-libexpat-type=static`, making a
-missing or unusable static archive a configure error.
+`--with-libexpat-prefix=$DEPS`, and `--with-libexpat-type=auto`, making a
+missing or unusable static archive a configure error. The dependency prefix
+contains only `libexpat.a`, so `auto` still embeds Expat while allowing its
+system `libm` dependency to remain dynamic.
 
 ## Selected approach
 
@@ -88,8 +90,10 @@ inherit llvm-mingw compiler selection accidentally.
 GDB keeps TUI, curses, and XML target-description support. Expat and the other
 optional libraries already built by the host-dependency preparation scripts
 remain statically linked. Every host build uses `--with-expat=yes`, the exact
-static dependency prefix, and `--with-libexpat-type=static`; configure must
-stop rather than produce a reduced GDB if the probe fails. Python, Guile,
+static-only dependency prefix, and `--with-libexpat-type=auto`; configure must
+stop rather than produce a reduced GDB if the probe fails. This avoids GDB's
+`static` dependency mode, which recursively requests a static system `libm.a`.
+Python, Guile,
 debuginfod, source-highlight, lzma, zstd, xxhash, and NLS remain disabled.
 
 The Linux runtime check changes from a denylist of familiar problematic

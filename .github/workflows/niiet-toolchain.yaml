@@ -46,6 +46,11 @@ jobs:
             -f build/Dockerfile.linux \
             build/
 
+      - name: Prepare source cache directory
+        run: |
+          sudo mkdir -p /mnt/sources
+          sudo chown "$USER" /mnt/sources
+
       - name: Cache patched GNU sources
         id: src
         uses: actions/cache@v5
@@ -62,8 +67,6 @@ jobs:
       - name: Prepare patched GNU sources
         if: steps.src.outputs.cache-hit != 'true'
         run: |
-          sudo mkdir -p /mnt/sources
-          sudo chown "$USER" /mnt/sources
           SOURCES=/mnt/sources bash build/prepare-sources.sh
 
       - name: Initialize build directories
@@ -338,6 +341,11 @@ jobs:
             --set x86_64-w64-mingw32-g++ \
             /usr/bin/x86_64-w64-mingw32-g++-posix
 
+      - name: Prepare source cache directory
+        run: |
+          sudo mkdir -p /mnt/sources
+          sudo chown "$USER" /mnt/sources
+
       - name: Cache patched GNU sources
         id: src
         uses: actions/cache@v5
@@ -354,8 +362,6 @@ jobs:
       - name: Prepare patched GNU sources
         if: steps.src.outputs.cache-hit != 'true'
         run: |
-          sudo mkdir -p /mnt/sources
-          sudo chown "$USER" /mnt/sources
           SOURCES=/mnt/sources bash build/prepare-sources.sh
 
       - name: Initialize build directories

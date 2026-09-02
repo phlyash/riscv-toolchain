@@ -86,8 +86,11 @@ Strategy (to be validated empirically, in order):
 ## GDB features and host runtime closure
 
 Every GDB build requires TUI, curses, and XML target descriptions. GDB configure receives
-`--with-expat=yes --with-libexpat-prefix=<deps> --with-libexpat-type=static`, so a missing
-static expat fails configuration rather than silently producing `--without-expat`.
+`--with-expat=yes --with-libexpat-prefix=<deps> --with-libexpat-type=auto`. The dependency
+prefix is built without shared Expat, so GDB selects `libexpat.a`; `auto` deliberately leaves
+Expat's system `libm` dependency dynamic. GDB's `static` dependency mode would also require
+`libm.a`, which is unavailable in the manylinux2014 image. A missing or unusable static Expat
+still fails configuration rather than silently producing `--without-expat`.
 
 `build/check-host-runtime.sh` then checks the completed package. Linux `DT_NEEDED` entries
 must belong to the explicit glibc ABI allowlist; Windows PE imports must belong to the

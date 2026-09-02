@@ -139,7 +139,7 @@ fail() {
     exit 1
 }
 
-assert_static_gdb_expat_flags() {
+assert_gdb_embeds_static_expat() {
     local gdb_flags
 
     gdb_flags="$(sed -n 's/^GDB_TARGET_FLAGS_EXTRA=//p' \
@@ -148,7 +148,7 @@ assert_static_gdb_expat_flags() {
     for expected in \
         '--with-expat=yes' \
         "--with-libexpat-prefix=$FAKE_DEPS" \
-        '--with-libexpat-type=static' \
+        '--with-libexpat-type=auto' \
         '--enable-tui' \
         '--with-curses'; do
         case " $gdb_flags " in
@@ -164,6 +164,13 @@ assert_static_gdb_expat_flags() {
         *" --with-expat=$FAKE_DEPS "*)
             cat "$CAPTURE_DIR/make.args" >&2
             fail "GDB uses its boolean --with-expat option as a path"
+            ;;
+    esac
+
+    case " $gdb_flags " in
+        *" --with-libexpat-type=static "*)
+            cat "$CAPTURE_DIR/make.args" >&2
+            fail "GDB forces Expat system dependencies such as libm to be static"
             ;;
     esac
 }
@@ -258,7 +265,7 @@ test_linux_gcc_disables_libcc1() {
         fail "Linux GCC configure flags do not disable libcc1"
     }
 
-    assert_static_gdb_expat_flags
+    assert_gdb_embeds_static_expat
 }
 
 test_linux_clang_statically_links_libgcc() {
@@ -298,7 +305,7 @@ test_windows_gdb_statically_links_winpthread() {
 
     run_windows_gcc
 
-    assert_static_gdb_expat_flags
+    assert_gdb_embeds_static_expat
 
     gdb_make_flags="$(sed -n 's/^GDB_TARGET_MAKE_FLAGS_EXTRA=//p' \
         "$CAPTURE_DIR/make.args")"

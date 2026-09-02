@@ -21,7 +21,26 @@ def job(workflow, name):
     return match.group(0)
 
 
+def assert_source_cache_directory_precedes_restore(test_case, workflow, job_name):
+    build_job = job(workflow, job_name)
+    prepare = "      - name: Prepare source cache directory\n"
+    restore = "      - name: Cache patched GNU sources\n"
+
+    test_case.assertIn(prepare, build_job)
+    test_case.assertLess(build_job.index(prepare), build_job.index(restore))
+    prepare_block = build_job[build_job.index(prepare) : build_job.index(restore)]
+    test_case.assertIn("sudo mkdir -p /mnt/sources", prepare_block)
+    test_case.assertIn('sudo chown "$USER" /mnt/sources', prepare_block)
+
+
 def assert_workflow_contract(test_case, workflow):
+    assert_source_cache_directory_precedes_restore(
+        test_case, workflow, "linux-x86_64"
+    )
+    assert_source_cache_directory_precedes_restore(
+        test_case, workflow, "windows-x86_64"
+    )
+
     windows_build = job(workflow, "windows-x86_64")
     test_case.assertIn("- name: Prepare pinned llvm-mingw", windows_build)
     test_case.assertIn("id: llvm_mingw", windows_build)
@@ -74,6 +93,15 @@ class NiietToolchainWorkflowTests(unittest.TestCase):
         mutated = self.workflow.replace(
             "          LLVM_MINGW_ROOT: ${{ steps.llvm_mingw.outputs.root }}\n",
             "",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            assert_workflow_contract(self, mutated)
+
+    def test_contract_rejects_cache_restore_before_directory_creation(self):
+        mutated = self.workflow.replace(
+            "      - name: Prepare source cache directory\n",
+            "      - name: Late source cache directory preparation\n",
             1,
         )
         with self.assertRaises(AssertionError):

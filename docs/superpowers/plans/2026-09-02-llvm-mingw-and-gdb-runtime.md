@@ -49,7 +49,7 @@
 - Consumes: the static expat archives prepared under `$DEPS`, `PREFIX`,
   `WITH_HOST`, and GDB's configuration/XML command output.
 - Produces: GDB configure flags `--with-expat=yes
-  --with-libexpat-prefix=$DEPS --with-libexpat-type=static`; `READELF`
+  --with-libexpat-prefix=$DEPS --with-libexpat-type=auto`; `READELF`
   override for hermetic tests; `is_linux_system_library(name) -> status`; a
   zero/non-zero checker exit status with the offending feature, file, and
   dependency printed on failure.
@@ -88,7 +88,7 @@ GDB configure arguments:
 ```text
 --with-expat=yes
 --with-libexpat-prefix=<fake dependency prefix>
---with-libexpat-type=static
+--with-libexpat-type=auto
 --enable-tui
 --with-curses
 ```
@@ -122,12 +122,14 @@ In both native and Windows `GDB_EXTRA`, replace:
 with:
 
 ```text
---with-expat=yes --with-libexpat-prefix=$DEPS --with-libexpat-type=static
+--with-expat=yes --with-libexpat-prefix=$DEPS --with-libexpat-type=auto
 ```
 
 `yes` makes a failed expat link probe fatal; the dedicated prefix option makes
-GDB find `$DEPS/include/expat.h` and `$DEPS/lib/libexpat.a`. Do not enable an
-expat shared build or copy an expat shared library into the package.
+GDB find `$DEPS/include/expat.h` and `$DEPS/lib/libexpat.a`. Because the prefix
+contains no shared Expat, `auto` selects that archive but does not recursively
+force its system `libm` dependency to use an unavailable `libm.a`. Do not enable
+an expat shared build or copy an expat shared library into the package.
 
 - [ ] **Step 4: Implement the Linux `DT_NEEDED` allowlist and XML probe**
 
