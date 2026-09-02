@@ -359,6 +359,8 @@ stage_clang() {
     local PY
     local LLVM_DIST="clang;clang-resource-headers;lld;clangd;clang-format;clang-tidy"
 
+    bash "$SRC/build/apply-llvm-patches.sh" "$SRC/llvm"
+
     PY="$(command -v python3.11 || command -v python3)"
 
     if [ -n "$WITH_HOST" ]; then

@@ -31,6 +31,8 @@
 #   clang compiles object
 #        ↓
 #   same GCC/newlib/libgcc/libstdc++ runtime links it successfully
+#        ↓
+#   clang's normal driver discovers and links that runtime itself
 #
 # Usage:
 #
@@ -242,6 +244,29 @@ check_clang_c()
 }
 
 
+check_clang_driver_link()
+{
+    local arch="$1"
+    local abi="$2"
+
+    if ! "$CLANG" \
+        "${CLANG_COMMON[@]}" \
+        -march="$arch" \
+        -mabi="$abi" \
+        --rtlib=libgcc \
+        "$tmp/test.c" \
+        -o "$tmp/clang-driver-${arch}-${abi}.elf" \
+        2>"$tmp/error.log"; then
+        echo "CLANG DRIVER + GCC RUNTIME LINK FAIL $arch/$abi"
+        cat "$tmp/error.log"
+
+        return 1
+    fi
+
+    return 0
+}
+
+
 check_clang_cpp()
 {
     local arch="$1"
@@ -346,6 +371,10 @@ check_common_pair()
         pair_fail=1
     fi
 
+    if ! check_clang_driver_link "$arch" "$abi"; then
+        pair_fail=1
+    fi
+
     if ! check_clang_cpp "$arch" "$abi"; then
         pair_fail=1
     fi
@@ -356,6 +385,7 @@ check_common_pair()
         echo "  GCC runtime exists"
         echo "  GCC links"
         echo "  Clang C object links with GCC runtime"
+        echo "  Clang driver selects and links the GCC runtime"
         echo "  Clang C++ object links with GCC libstdc++ runtime"
     else
         echo

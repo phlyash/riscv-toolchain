@@ -79,6 +79,11 @@ Strategy (to be validated empirically, in order):
   and uses llvm-mingw's Clang, windres, ar, ranlib, and strip with static host linkage.
   All `.exe` files install into the same GCC-populated `$PREFIX`; llvm-mingw's target
   runtimes are not copied into the package.
+- **All Clang hosts**: before configuring LLVM, `apply-llvm-patches.sh` adds GCC 14's
+  canonical RISC-V hard-float directory names (`rv32imafc_zicsr/ilp32f` and
+  `rv32imafdc_zicsr/ilp32d`) to Clang's GCC multilib detector. LLVM 22 otherwise
+  looks only for the older names without `_zicsr`, silently selects the default
+  soft-float runtime, and fails a normal `ilp32f` driver link.
 - **macOS arm64**: native on `macos-14`; Homebrew
   bison/gawk/gsed/gmake + gmp/mpfr/mpc, prefix auto-detected via `$(brew --prefix)`
   (`/opt/homebrew`). Source trees may need a case-sensitive volume.
@@ -114,6 +119,8 @@ the equivalent executable GDB probe after extracting the final ZIP. Thus `libexp
   mirror and never leave a partial archive at the final path.
 - `prepare-llvm-mingw.sh` / `test-prepare-llvm-mingw.sh` — download, checksum, atomically
   install, validate, and regression-test the pinned Windows LLVM host compiler.
+- `apply-llvm-patches.sh` — idempotently applies the pinned Clang/GCC 14 multilib
+  compatibility patch before native or Windows LLVM configuration.
 - `test-host-runtime.sh` — hermetic fail-closed Linux dependency and GDB XML tests.
 - `test-windows-clang.ps1` — runs the packaged Windows Clang optimizer reproducer,
   links an RV32 program through the packaged GCC sysroot/libgcc, validates the ELF, and

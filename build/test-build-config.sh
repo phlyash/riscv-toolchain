@@ -21,11 +21,18 @@ mkdir -p \
     "$FAKE_BIN" \
     "$FAKE_SRC/build" \
     "$FAKE_SRC/gdb" \
+    "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains" \
     "$FAKE_SRC/llvm/llvm" \
     "$FAKE_DEPS/include" \
     "$FAKE_DEPS/lib" \
     "$FAKE_LLVM_MINGW/bin" \
     "$CAPTURE_DIR"
+
+cp "$ROOT/llvm/clang/lib/Driver/ToolChains/Gnu.cpp" \
+    "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains/Gnu.cpp"
+cp "$ROOT/build/apply-llvm-patches.sh" "$FAKE_SRC/build/"
+mkdir -p "$FAKE_SRC/patch"
+cp "$ROOT/patch/llvm-riscv-gcc14-multilib.patch" "$FAKE_SRC/patch/"
 
 export CAPTURE_DIR FAKE_DEPS
 
@@ -376,6 +383,18 @@ test_windows_clang_uses_pinned_llvm_mingw() {
     local incomplete_root="$TMP/incomplete-llvm-mingw"
 
     run_windows_clang
+
+    for arch in rv32imafc_zicsr rv32imafdc_zicsr; do
+        grep -Fq -- "{\"$arch\"," \
+            "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains/Gnu.cpp" || {
+            fail "Windows LLVM source does not recognize GCC 14 multilib $arch"
+        }
+    done
+
+    bash "$FAKE_SRC/build/apply-llvm-patches.sh" \
+        "$FAKE_SRC/llvm" >/dev/null || {
+        fail "LLVM multilib compatibility patch is not idempotent"
+    }
 
     while IFS=' ' read -r variable tool; do
         expected="-$variable=$FAKE_LLVM_MINGW/bin/$tool"
