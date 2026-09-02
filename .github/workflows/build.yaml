@@ -17,6 +17,7 @@ jobs:
       - name: Test host runtime link configuration
         run: |
           bash build/test-build-config.sh all
+          bash build/test-host-runtime.sh
           bash build/test-fetch-source.sh
           bash build/test-release-files.sh
           python3 build/test-beget-release.py

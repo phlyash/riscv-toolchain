@@ -169,7 +169,8 @@ EOF
 
         GDB_EXTRA="--enable-tui --with-curses \
 --enable-static --disable-shared --with-static-standard-libraries \
---with-gmp=$DEPS --with-mpfr=$DEPS --with-expat=$DEPS \
+--with-gmp=$DEPS --with-mpfr=$DEPS --with-expat=yes \
+--with-libexpat-prefix=$DEPS \
 --with-libexpat-type=static \
 --without-python --without-guile \
 --with-debuginfod=no --with-lzma=no --with-zstd=no --with-xxhash=no \
@@ -203,7 +204,8 @@ CFLAGS=\"-O2 -static\" CXXFLAGS=\"-O2 -static\""
 
     GDB_EXTRA="--enable-tui --with-curses \
 --enable-static --disable-shared \
---with-gmp=$DEPS --with-mpfr=$DEPS --with-expat=$DEPS \
+--with-gmp=$DEPS --with-mpfr=$DEPS --with-expat=yes \
+--with-libexpat-prefix=$DEPS \
 --with-libexpat-type=static \
 --without-python --without-guile \
 --with-debuginfod=no --with-lzma=no --with-zstd=no --with-xxhash=no \

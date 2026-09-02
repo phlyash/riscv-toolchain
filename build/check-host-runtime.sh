@@ -6,14 +6,76 @@ WITH_HOST="${WITH_HOST:-}"
 TUPLE="riscv32-unknown-elf"
 fail=0
 
-check_linux() {
-    local f="$1" deps
-    file -b "$f" 2>/dev/null | grep -Eq 'ELF .* (executable|shared object)' || return 0
-    deps="$(ldd "$f" 2>/dev/null || true)"
+is_linux_system_library() {
+    case "$1" in
+        libc.so.6|libm.so.6|libdl.so.2|libpthread.so.0|librt.so.1|\
+        ld-linux-x86-64.so.2|ld-linux-aarch64.so.1)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
-    if echo "$deps" | grep -Eqi 'lib(stdc\+\+|gcc_s|gmp|mpfr|mpc|isl|ncurses|tinfo|expat|zstd|lzma|readline|python|iconv|intl)[^ ]*\.so|libz\.so'; then
-        echo "FORBIDDEN Linux runtime dependency: $f"
-        echo "$deps"
+check_linux() {
+    local f="$1" deps dependency readelf
+    readelf="${READELF:-readelf}"
+
+    "$readelf" -h "$f" >/dev/null 2>&1 || return 0
+    deps="$("$readelf" -d "$f" 2>/dev/null || true)"
+
+    while IFS= read -r dependency; do
+        [ -z "$dependency" ] && continue
+        if ! is_linux_system_library "$dependency"; then
+            echo "FORBIDDEN Linux runtime dependency: $f -> $dependency"
+            echo "$deps"
+            fail=1
+        fi
+    done < <(sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p' <<<"$deps")
+}
+
+check_native_gdb_features() {
+    local gdb="$PREFIX/bin/${TUPLE}-gdb"
+    local cfg xml_file xml_output
+
+    if ! cfg="$("$gdb" --configuration 2>&1)"; then
+        echo "Unable to read GDB configuration: $gdb"
+        echo "$cfg"
+        fail=1
+        return
+    fi
+
+    grep -q -- '--enable-tui' <<<"$cfg" || {
+        echo "GDB built without --enable-tui"
+        fail=1
+    }
+    grep -q -- '--with-curses' <<<"$cfg" || {
+        echo "GDB built without --with-curses"
+        fail=1
+    }
+    if grep -q -- '--without-expat' <<<"$cfg" ||
+       ! grep -q -- '--with-expat' <<<"$cfg"; then
+        echo "GDB built without --with-expat"
+        fail=1
+    fi
+
+    xml_file="$(mktemp "${TMPDIR:-/tmp}/gdb-xml-check.XXXXXX")"
+    printf '%s\n' '<?xml version="1.0"?><target>' > "$xml_file"
+    xml_output="$(
+        "$gdb" -nx -batch -ex "set tdesc filename $xml_file" 2>&1 || true
+    )"
+    rm -f "$xml_file"
+
+    if grep -Fq 'XML support was disabled at compile time' <<<"$xml_output"; then
+        echo "GDB XML parser is disabled"
+        echo "$xml_output"
+        fail=1
+    elif ! grep -Eq \
+        'while parsing target description|Could not load XML target description' \
+        <<<"$xml_output"; then
+        echo "GDB XML probe did not reach the XML parser"
+        echo "$xml_output"
         fail=1
     fi
 }
@@ -74,9 +136,7 @@ case "${WITH_HOST:-$(uname -s)}" in
             check_linux "$f"
         done < <(find "$PREFIX" -type f -print0)
 
-        cfg="$("$PREFIX/bin/${TUPLE}-gdb" --configuration)"
-        grep -q -- '--enable-tui' <<<"$cfg" || { echo "GDB built without --enable-tui"; fail=1; }
-        grep -q -- '--with-curses' <<<"$cfg" || { echo "GDB built without --with-curses"; fail=1; }
+        check_native_gdb_features
         ;;
 
     Darwin)
@@ -84,9 +144,7 @@ case "${WITH_HOST:-$(uname -s)}" in
             check_macos "$f"
         done < <(find "$PREFIX" -type f -print0)
 
-        cfg="$("$PREFIX/bin/${TUPLE}-gdb" --configuration)"
-        grep -q -- '--enable-tui' <<<"$cfg" || { echo "GDB built without --enable-tui"; fail=1; }
-        grep -q -- '--with-curses' <<<"$cfg" || { echo "GDB built without --with-curses"; fail=1; }
+        check_native_gdb_features
         ;;
 esac
 

@@ -121,6 +121,35 @@ fail() {
     exit 1
 }
 
+assert_static_gdb_expat_flags() {
+    local gdb_flags
+
+    gdb_flags="$(sed -n 's/^GDB_TARGET_FLAGS_EXTRA=//p' \
+        "$CAPTURE_DIR/make.args")"
+
+    for expected in \
+        '--with-expat=yes' \
+        "--with-libexpat-prefix=$FAKE_DEPS" \
+        '--with-libexpat-type=static' \
+        '--enable-tui' \
+        '--with-curses'; do
+        case " $gdb_flags " in
+            *" $expected "*) ;;
+            *)
+                cat "$CAPTURE_DIR/make.args" >&2
+                fail "GDB configure flags are missing $expected"
+                ;;
+        esac
+    done
+
+    case " $gdb_flags " in
+        *" --with-expat=$FAKE_DEPS "*)
+            cat "$CAPTURE_DIR/make.args" >&2
+            fail "GDB uses its boolean --with-expat option as a path"
+            ;;
+    esac
+}
+
 run_linux_gcc() {
     local prefix="$TMP/prefix-linux-gcc"
     local work="$TMP/work-linux-gcc"
@@ -187,6 +216,8 @@ test_linux_gcc_disables_libcc1() {
         cat "$CAPTURE_DIR/make.args" >&2
         fail "Linux GCC configure flags do not disable libcc1"
     }
+
+    assert_static_gdb_expat_flags
 }
 
 test_linux_clang_statically_links_libgcc() {
@@ -225,6 +256,8 @@ test_windows_gdb_statically_links_winpthread() {
     local gdb_flags gdb_make_flags make_output make_work
 
     run_windows_gcc
+
+    assert_static_gdb_expat_flags
 
     gdb_make_flags="$(sed -n 's/^GDB_TARGET_MAKE_FLAGS_EXTRA=//p' \
         "$CAPTURE_DIR/make.args")"
