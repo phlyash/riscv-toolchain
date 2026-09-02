@@ -22,12 +22,22 @@ official Windows MSVC build, which isolates the failure to the Windows binary
 built with GNU MinGW GCC rather than to the RISC-V source program or GCC
 sysroot.
 
-The current Linux 1.0 artifact was also inspected directly. Its
-`riscv32-unknown-elf-gdb` has no dynamic expat, curses, readline, Python, GMP,
-MPFR, zstd, lzma, or C++ runtime dependency. It needs only the glibc ABI
-libraries already permitted for the Linux host. The existing build statically
-builds expat and configures GDB with `--with-libexpat-type=static`; the reported
-`libexpat.so` requirement therefore indicates an older or different artifact.
+The current Linux 1.0 artifact was inspected and executed directly. Its
+`riscv32-unknown-elf-gdb --configuration` reports `--without-expat`, and a
+batch attempt to load an XML target description produces `XML support was
+disabled at compile time`. It has no dynamic expat dependency because XML was
+silently omitted, not because expat was successfully embedded. The matching
+Windows GDB reports `--with-expat`, parses the same XML far enough to report a
+syntax error, and imports no expat DLL, proving that static expat works in the
+Windows path.
+
+The native build passes `--with-expat=$DEPS`, although GDB treats
+`--with-expat` as the boolean `auto/yes/no` switch and uses the separate
+`--with-libexpat-prefix=DIR` option for a dependency prefix. Because the
+non-boolean path value is not `yes`, a failed probe is only a warning and the
+build succeeds without XML. The fix must use `--with-expat=yes`,
+`--with-libexpat-prefix=$DEPS`, and `--with-libexpat-type=static`, making a
+missing or unusable static archive a configure error.
 
 ## Selected approach
 
@@ -77,8 +87,10 @@ inherit llvm-mingw compiler selection accidentally.
 
 GDB keeps TUI, curses, and XML target-description support. Expat and the other
 optional libraries already built by the host-dependency preparation scripts
-remain statically linked. Python, Guile, debuginfod, source-highlight, lzma,
-zstd, xxhash, and NLS remain disabled.
+remain statically linked. Every host build uses `--with-expat=yes`, the exact
+static dependency prefix, and `--with-libexpat-type=static`; configure must
+stop rather than produce a reduced GDB if the probe fails. Python, Guile,
+debuginfod, source-highlight, lzma, zstd, xxhash, and NLS remain disabled.
 
 The Linux runtime check changes from a denylist of familiar problematic
 libraries to an allowlist of the small glibc ABI set observed across the shipped
@@ -87,8 +99,11 @@ offending file and complete dependency list. Architecture-specific glibc loader
 names for x86_64 and aarch64 are explicitly permitted.
 
 Windows retains its existing system-DLL allowlist. macOS retains the rule that
-rejects Homebrew paths. GDB configuration checks continue to assert TUI and
-curses support, and a regression assertion preserves static expat selection.
+rejects Homebrew paths. Each completed GDB must report TUI, curses, and expat
+in `--configuration`. A batch invalid-XML probe must reach expat and report an
+XML syntax error; the phrase `XML support was disabled at compile time` is a
+hard failure. Runtime scans independently prove that no expat shared library
+or DLL is required.
 
 ## CI flow and regression coverage
 
@@ -115,15 +130,19 @@ whose Clang cannot run or optimize is never released.
 
 Fast tests will validate llvm-mingw selection and isolation from the GCC/GDB
 stage. Runtime-check tests will feed permitted and forbidden dependency sets,
-including `libexpat.so`, and prove that unknown libraries fail closed. The final
-verification includes fast suites, shell syntax checks, workflow linting, the
-Linux runtime scan, and the native Windows CI smoke test.
+including `libexpat.so`, and prove that unknown libraries fail closed. GDB
+feature tests will also reject `--without-expat` and the compile-time-disabled
+XML warning. The final verification includes fast suites, shell syntax checks,
+workflow linting, host runtime scans, XML probes, and the native Windows CI
+smoke test.
 
 ## Failure handling
 
 - A missing or hash-mismatched llvm-mingw archive stops the build before CMake.
 - Missing llvm-mingw compiler utilities produce an explicit configuration
   error instead of falling back to GNU MinGW.
+- A missing or unusable static expat archive stops GDB configure.
+- A completed GDB that cannot parse XML fails host-runtime verification.
 - Any non-allowlisted host dependency fails before packaging or publication.
 - Any native Windows Clang crash or link failure blocks the release job.
 
