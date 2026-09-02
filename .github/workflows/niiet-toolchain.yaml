@@ -363,6 +363,12 @@ jobs:
           sudo mkdir -p /mnt/work /mnt/prefix-win /mnt/out
           sudo chown "$USER" /mnt/work /mnt/prefix-win /mnt/out
 
+      - name: Prepare pinned llvm-mingw
+        id: llvm_mingw
+        run: |
+          root="$(WORK=/mnt/work bash build/prepare-llvm-mingw.sh)"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+
       - name: Build GCC + GDB Canadian-cross
         run: |
           SRC="$PWD" \
@@ -374,6 +380,8 @@ jobs:
             bash build/build-baremetal.sh gcc
 
       - name: Build upstream LLVM + Clang Canadian-cross
+        env:
+          LLVM_MINGW_ROOT: ${{ steps.llvm_mingw.outputs.root }}
         run: |
           SRC="$PWD" \
           SOURCES=/mnt/sources \
@@ -455,6 +463,25 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  windows-clang-smoke:
+    name: Test packaged Windows Clang and GDB
+    needs: windows-x86_64
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download packaged Windows toolchain
+        uses: actions/download-artifact@v8
+        with:
+          name: niiet-riscv-toolchain-windows-x86_64.zip
+          path: smoke-artifact
+
+      - name: Run native Windows smoke checks
+        shell: pwsh
+        run: |
+          ./build/test-windows-clang.ps1 `
+            -Archive smoke-artifact/niiet-riscv-toolchain-windows-x86_64.zip
+
   release:
     name: Publish GitHub Release
     if: github.event_name == 'workflow_dispatch'
@@ -462,6 +489,7 @@ jobs:
       - linux-x86_64
       - macos-aarch64
       - windows-x86_64
+      - windows-clang-smoke
     runs-on: ubuntu-latest
     permissions:
       contents: write

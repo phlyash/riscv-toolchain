@@ -20,6 +20,7 @@ jobs:
           bash build/test-host-runtime.sh
           bash build/test-fetch-source.sh
           bash build/test-prepare-llvm-mingw.sh
+          python3 build/test-niiet-toolchain-workflow.py
           bash build/test-release-files.sh
           python3 build/test-beget-release.py
           bash build/test-deploy-beget.sh
