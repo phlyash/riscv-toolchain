@@ -31,10 +31,8 @@ if [ "$has_single" -ne "$has_double" ]; then
     exit 1
 fi
 
-(
-    cd "$LLVM_SRC"
-    patch -f -p1 < "$PATCH_FILE"
-)
+git -C "$LLVM_SRC" apply --check "$PATCH_FILE"
+git -C "$LLVM_SRC" apply "$PATCH_FILE"
 
 grep -Fq -- "$single" "$GNU_TOOLCHAIN"
 grep -Fq -- "$double" "$GNU_TOOLCHAIN"

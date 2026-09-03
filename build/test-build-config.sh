@@ -30,9 +30,12 @@ mkdir -p \
 
 cp "$ROOT/llvm/clang/lib/Driver/ToolChains/Gnu.cpp" \
     "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains/Gnu.cpp"
+cp "$ROOT/llvm/clang/lib/Driver/ToolChains/Gnu.cpp" \
+    "$TMP/Gnu.cpp.pristine"
 cp "$ROOT/build/apply-llvm-patches.sh" "$FAKE_SRC/build/"
 mkdir -p "$FAKE_SRC/patch"
 cp "$ROOT/patch/llvm-riscv-gcc14-multilib.patch" "$FAKE_SRC/patch/"
+git -C "$FAKE_SRC/llvm" init -q
 
 export CAPTURE_DIR FAKE_DEPS
 
@@ -72,6 +75,12 @@ EOF
 cat > "$FAKE_BIN/file" <<'EOF'
 #!/usr/bin/env bash
 printf 'PE32+ executable (console) x86-64\n'
+EOF
+
+cat > "$FAKE_BIN/patch" <<'EOF'
+#!/usr/bin/env bash
+echo "host patch implementation must not be used for LLVM sources" >&2
+exit 97
 EOF
 
 cat > "$FAKE_BIN/make" <<'EOF'
@@ -199,6 +208,9 @@ run_linux_clang() {
     local prefix="$TMP/prefix-linux-clang"
     local work="$TMP/work-linux-clang"
 
+    cp "$TMP/Gnu.cpp.pristine" \
+        "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains/Gnu.cpp"
+
     PATH="$FAKE_BIN:$PATH" \
     SRC="$FAKE_SRC" \
     SOURCES="$TMP/sources" \
@@ -212,6 +224,9 @@ run_macos_clang() {
     local prefix="$TMP/prefix-macos-clang"
     local work="$TMP/work-macos-clang"
 
+    cp "$TMP/Gnu.cpp.pristine" \
+        "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains/Gnu.cpp"
+
     PATH="$FAKE_BIN:$PATH" \
     FAKE_UNAME_SYSTEM=Darwin \
     SRC="$FAKE_SRC" \
@@ -220,6 +235,17 @@ run_macos_clang() {
     PREFIX="$prefix" \
     OUT="$TMP/out" \
         bash "$ROOT/build/build-baremetal.sh" clang >/dev/null
+}
+
+test_llvm_multilib_patch_is_host_patch_independent() {
+    cp "$TMP/Gnu.cpp.pristine" \
+        "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains/Gnu.cpp"
+
+    PATH="$FAKE_BIN:$PATH" \
+        bash "$FAKE_SRC/build/apply-llvm-patches.sh" \
+            "$FAKE_SRC/llvm" >/dev/null || {
+        fail "LLVM multilib patch depends on the host patch implementation"
+    }
 }
 
 run_windows_gcc() {
@@ -245,6 +271,9 @@ run_windows_gcc() {
 run_windows_clang() {
     local prefix="$TMP/prefix-windows-clang"
     local work="$TMP/work-windows-clang"
+
+    cp "$TMP/Gnu.cpp.pristine" \
+        "$FAKE_SRC/llvm/clang/lib/Driver/ToolChains/Gnu.cpp"
 
     mkdir -p "$work/llvm-native-tblgen/bin"
     for tool in llvm-tblgen clang-tblgen; do
@@ -473,6 +502,9 @@ run_test() {
 }
 
 case "$TEST_CASE" in
+    llvm-multilib-patch-portable)
+        run_test test_llvm_multilib_patch_is_host_patch_independent
+        ;;
     linux-gcc-no-libcc1)
         run_test test_linux_gcc_disables_libcc1
         ;;
@@ -489,6 +521,7 @@ case "$TEST_CASE" in
         run_test test_windows_clang_uses_pinned_llvm_mingw
         ;;
     all)
+        run_test test_llvm_multilib_patch_is_host_patch_independent
         run_test test_linux_gcc_disables_libcc1
         run_test test_linux_clang_statically_links_libgcc
         run_test test_macos_clang_works_with_empty_static_link_flags
@@ -496,7 +529,7 @@ case "$TEST_CASE" in
         run_test test_windows_clang_uses_pinned_llvm_mingw
         ;;
     *)
-        echo "usage: $0 {linux-gcc-no-libcc1|linux-clang-static-libgcc|macos-clang-no-static-gcc-flags|windows-gdb-static-winpthread|windows-clang-llvm-mingw|all}" >&2
+        echo "usage: $0 {llvm-multilib-patch-portable|linux-gcc-no-libcc1|linux-clang-static-libgcc|macos-clang-no-static-gcc-flags|windows-gdb-static-winpthread|windows-clang-llvm-mingw|all}" >&2
         exit 2
         ;;
 esac

@@ -1,12 +1,15 @@
 diff --git a/clang/lib/Driver/ToolChains/Gnu.cpp b/clang/lib/Driver/ToolChains/Gnu.cpp
-index e4b9b6ec7a78..8a8a0af68dcc 100644
 --- a/clang/lib/Driver/ToolChains/Gnu.cpp
 +++ b/clang/lib/Driver/ToolChains/Gnu.cpp
-@@ -1726,4 +1726,9 @@ static void findRISCVBareMetalMultilibs(const Driver &D,
+@@ -1723,9 +1723,14 @@ static void findRISCVBareMetalMultilibs(const Driver &D,
+   };
+   // currently only support the set of multilibs like riscv-gnu-toolchain does.
+   // TODO: support MULTILIB_REUSE
    constexpr RiscvMultilib RISCVMultilibSet[] = {
        {"rv32i", "ilp32"},     {"rv32im", "ilp32"},     {"rv32iac", "ilp32"},
 -      {"rv32imac", "ilp32"},  {"rv32imafc", "ilp32f"}, {"rv64imac", "lp64"},
 -      {"rv64imafdc", "lp64d"}};
+-
 +      {"rv32imac", "ilp32"},  {"rv32imafc", "ilp32f"},
 +      // GCC 14 with --with-isa-spec=20191213 appends F's Zicsr dependency
 +      // to multilib directory names.
@@ -14,3 +17,5 @@ index e4b9b6ec7a78..8a8a0af68dcc 100644
 +      {"rv32imafdc", "ilp32d"},
 +      {"rv32imafdc_zicsr", "ilp32d"},
 +      {"rv64imac", "lp64"},   {"rv64imafdc", "lp64d"}};
++
+   std::vector<MultilibBuilder> Ms;

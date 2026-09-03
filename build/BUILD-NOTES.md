@@ -120,7 +120,8 @@ the equivalent executable GDB probe after extracting the final ZIP. Thus `libexp
 - `prepare-llvm-mingw.sh` / `test-prepare-llvm-mingw.sh` — download, checksum, atomically
   install, validate, and regression-test the pinned Windows LLVM host compiler.
 - `apply-llvm-patches.sh` — idempotently applies the pinned Clang/GCC 14 multilib
-  compatibility patch before native or Windows LLVM configuration.
+  compatibility patch with Git (independent of the host `patch` implementation)
+  before native or Windows LLVM configuration.
 - `test-host-runtime.sh` — hermetic fail-closed Linux dependency and GDB XML tests.
 - `test-windows-clang.ps1` — runs the packaged Windows Clang optimizer reproducer,
   links an RV32 program through the packaged GCC sysroot/libgcc, validates the ELF, and
