@@ -60,7 +60,7 @@ scan_file()
             checked = 0
             bad = 0
             member = ""
-            func = ""
+            fn = ""
             prev = ""
         }
         /:[ \t]+file format / {
@@ -70,7 +70,7 @@ scan_file()
             next
         }
         /^[0-9a-f]+ <.*>:$/ {
-            func = $2
+            fn = $2
             prev = ""
             next
         }
@@ -92,7 +92,7 @@ scan_file()
                     addr = field[1]
                     gsub(/[ \t:]/, "", addr)
                     printf "  MISSING NOP %s(%s) %s+0x%s: %s after %s\n", \
-                        file, member, func, addr, insn, \
+                        file, member, fn, addr, insn, \
                         (prev == "" ? "<start>" : prev)
                 }
             }
