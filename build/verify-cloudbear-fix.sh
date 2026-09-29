@@ -205,8 +205,11 @@ do
     IFS=: read -r arch abi sym insn <<<"$entry"
     for lib in libm.a libm_nano.a; do
         path="$("$GCC" -march="$arch" -mabi="$abi" -print-file-name="$lib")"
-        if "$OBJDUMP" -d --no-show-raw-insn --disassemble="$sym" "$path" \
-            2>/dev/null | grep -Eq "[[:space:]]${insn//./\\.}[[:space:]]"; then
+        # Capture first: grep -q exiting early would SIGPIPE objdump and,
+        # with pipefail, turn a match into a failure.
+        "$OBJDUMP" -d --no-show-raw-insn --disassemble="$sym" "$path" \
+            > "$tmp/sqrt.txt" 2>/dev/null
+        if grep -Eq "[[:space:]]${insn//./\\.}[[:space:]]" "$tmp/sqrt.txt"; then
             echo "  OK      $arch/$abi $lib $sym uses $insn"
         else
             echo "  MISSING $arch/$abi $lib $sym does not use $insn"
