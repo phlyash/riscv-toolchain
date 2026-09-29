@@ -140,3 +140,43 @@ index cc41813d..203b508f 100644
  	return result;
  }
  
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 10:44:06 +0000
+Subject: riscv: include riscv_math.h in e_sqrt.c and ef_sqrt.c
+
+Both files test __RISCV_HARD_FLOAT, which is defined in riscv_math.h,
+but never include that header. The hardware fsqrt.s/fsqrt.d path was
+therefore dead code and every multilib used the generic software
+square root. Include the header, as upstream newlib does, so FPU
+multilibs use the (CloudBEAR 0001 guarded) fsqrt instruction.
+---
+ newlib/libm/machine/riscv/e_sqrt.c  | 1 +
+ newlib/libm/machine/riscv/ef_sqrt.c | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/newlib/libm/machine/riscv/e_sqrt.c b/newlib/libm/machine/riscv/e_sqrt.c
+index 2117d8fe..f6e9a90d 100644
+--- a/newlib/libm/machine/riscv/e_sqrt.c
++++ b/newlib/libm/machine/riscv/e_sqrt.c
+@@ -35,6 +35,7 @@
+ 
+ #include <math.h>
+ #include "math_config.h"
++#include "riscv_math.h"
+ 
+ #if defined(__RISCV_HARD_FLOAT) && __RISCV_HARD_FLOAT >= 64
+ 
+diff --git a/newlib/libm/machine/riscv/ef_sqrt.c b/newlib/libm/machine/riscv/ef_sqrt.c
+index 203b508f..0d13f850 100644
+--- a/newlib/libm/machine/riscv/ef_sqrt.c
++++ b/newlib/libm/machine/riscv/ef_sqrt.c
+@@ -35,6 +35,7 @@
+ 
+ #include <math.h>
+ #include "math_config.h"
++#include "riscv_math.h"
+ 
+ #if defined(__RISCV_HARD_FLOAT) && __RISCV_HARD_FLOAT >= 32
+ 

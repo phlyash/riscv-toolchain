@@ -54,14 +54,18 @@ C, 4 without) and about one cycle per such instruction. There is no separate fix
 multilib.
 
 newlib's `libm/machine/riscv/{e,ef}_sqrt.c` use inline-asm `fsqrt`, which the flag cannot
-reach; `riscv-newlib.patch` adds the `nop` there explicitly.
+reach; `riscv-newlib.patch` adds the `nop` there explicitly. The pinned newlib also forgot
+to include `riscv_math.h` in those files, so the hardware path was dead code and `sqrt`/
+`sqrtf` fell back to the software algorithm; the patch adds the include, so FPU multilibs
+now use the guarded `fsqrt.s`/`fsqrt.d`.
 
 Application code for the affected core must still be compiled with GCC and
 `-mfix-cloudbear-0001`. Clang has no equivalent option: Clang-linked programs get the
 fixed runtime, but Clang-compiled code carries no workaround.
 
 `build/verify-cloudbear-fix.sh` (run from `verify-multilib.sh`) disassembles every
-installed `.a`/`.o` and fails if any guarded instruction lacks the preceding `nop`.
+installed `.a`/`.o` and fails if any guarded instruction lacks the preceding `nop`, or if
+an FPU multilib's `libm` does not use hardware `fsqrt`.
 
 ## Two-pass constraint
 
