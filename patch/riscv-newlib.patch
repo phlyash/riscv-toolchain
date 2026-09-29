@@ -93,3 +93,50 @@ index beebe31f7..e4172aacb 100644
 -- 
 2.39.3
 
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 29 Sep 2026 07:50:16 +0000
+Subject: riscv: add CloudBEAR 0001 erratum nop to inline-asm fsqrt
+
+-mfix-cloudbear-0001 makes GCC emit a nop before every fdiv/fsqrt it
+generates, but it cannot rewrite inline asm. __ieee754_sqrt and
+__ieee754_sqrtf use inline-asm fsqrt, so add the nop explicitly. A nop
+is harmless on cores without the erratum.
+---
+ newlib/libm/machine/riscv/e_sqrt.c  | 5 ++++-
+ newlib/libm/machine/riscv/ef_sqrt.c | 5 ++++-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/newlib/libm/machine/riscv/e_sqrt.c b/newlib/libm/machine/riscv/e_sqrt.c
+index 0c5aaadf..2117d8fe 100644
+--- a/newlib/libm/machine/riscv/e_sqrt.c
++++ b/newlib/libm/machine/riscv/e_sqrt.c
+@@ -42,7 +42,10 @@ double
+ __ieee754_sqrt (double x)
+ {
+ 	double result;
+-	asm ("fsqrt.d %0, %1" : "=f" (result) : "f" (x));
++	/* The leading nop is the CloudBEAR 0001 erratum workaround that
++	   -mfix-cloudbear-0001 emits before compiler-generated fsqrt; the
++	   compiler cannot add it to inline asm.  It is harmless elsewhere.  */
++	asm ("nop\n\tfsqrt.d %0, %1" : "=f" (result) : "f" (x));
+ 	return result;
+ }
+ 
+diff --git a/newlib/libm/machine/riscv/ef_sqrt.c b/newlib/libm/machine/riscv/ef_sqrt.c
+index cc41813d..203b508f 100644
+--- a/newlib/libm/machine/riscv/ef_sqrt.c
++++ b/newlib/libm/machine/riscv/ef_sqrt.c
+@@ -42,7 +42,10 @@ float
+ __ieee754_sqrtf (float x)
+ {
+ 	float result;
+-	asm ("fsqrt.s %0, %1" : "=f" (result) : "f" (x));
++	/* The leading nop is the CloudBEAR 0001 erratum workaround that
++	   -mfix-cloudbear-0001 emits before compiler-generated fsqrt; the
++	   compiler cannot add it to inline asm.  It is harmless elsewhere.  */
++	asm ("nop\n\tfsqrt.s %0, %1" : "=f" (result) : "f" (x));
+ 	return result;
+ }
+ 

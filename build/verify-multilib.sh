@@ -487,6 +487,9 @@ for pair in "${GCC_ONLY_PAIRS[@]}"; do
 done
 
 echo
+PREFIX="$PREFIX" bash "$(dirname "$0")/verify-cloudbear-fix.sh" || fail=1
+
+echo
 echo "============================================================"
 
 if [ "$fail" -eq 0 ]; then

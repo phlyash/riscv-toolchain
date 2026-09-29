@@ -304,6 +304,21 @@ test_linux_gcc_disables_libcc1() {
     assert_gdb_embeds_static_expat
 }
 
+test_linux_gcc_target_libs_fix_cloudbear_0001() {
+    local expected
+
+    run_linux_gcc
+
+    for expected in \
+        '--with-target-cflags=-mfix-cloudbear-0001' \
+        '--with-target-cxxflags=-mfix-cloudbear-0001'; do
+        grep -Fxq -- "$expected" "$CAPTURE_DIR/configure.args" || {
+            cat "$CAPTURE_DIR/configure.args" >&2
+            fail "GCC configure flags are missing $expected"
+        }
+    done
+}
+
 test_linux_clang_statically_links_libgcc() {
     local kind expected
 
@@ -508,6 +523,9 @@ case "$TEST_CASE" in
     linux-gcc-no-libcc1)
         run_test test_linux_gcc_disables_libcc1
         ;;
+    linux-gcc-fix-cloudbear-0001)
+        run_test test_linux_gcc_target_libs_fix_cloudbear_0001
+        ;;
     linux-clang-static-libgcc)
         run_test test_linux_clang_statically_links_libgcc
         ;;
@@ -523,13 +541,14 @@ case "$TEST_CASE" in
     all)
         run_test test_llvm_multilib_patch_is_host_patch_independent
         run_test test_linux_gcc_disables_libcc1
+        run_test test_linux_gcc_target_libs_fix_cloudbear_0001
         run_test test_linux_clang_statically_links_libgcc
         run_test test_macos_clang_works_with_empty_static_link_flags
         run_test test_windows_gdb_statically_links_winpthread
         run_test test_windows_clang_uses_pinned_llvm_mingw
         ;;
     *)
-        echo "usage: $0 {llvm-multilib-patch-portable|linux-gcc-no-libcc1|linux-clang-static-libgcc|macos-clang-no-static-gcc-flags|windows-gdb-static-winpthread|windows-clang-llvm-mingw|all}" >&2
+        echo "usage: $0 {llvm-multilib-patch-portable|linux-gcc-no-libcc1|linux-gcc-fix-cloudbear-0001|linux-clang-static-libgcc|macos-clang-no-static-gcc-flags|windows-gdb-static-winpthread|windows-clang-llvm-mingw|all}" >&2
         exit 2
         ;;
 esac

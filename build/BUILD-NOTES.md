@@ -43,6 +43,26 @@ on a shared selected multilib, if Clang can't parse a shared `-march`, or if a
 variant won't link. NOTE: installed dir names changed from `rv32imc_zicsr_zifencei/` to
 `rv32imc/` — update anything that hardcoded the old paths.
 
+## CloudBEAR 0001 erratum workaround in the runtime
+
+All GCC-built target libraries (newlib, newlib-nano, libgloss, libgcc, libstdc++, crt
+objects) are compiled with `-mfix-cloudbear-0001`, passed as
+`--with-target-cflags`/`--with-target-cxxflags` in `build-baremetal.sh`. The flag only
+places a `nop` before `div`/`divu`/`rem`/`remu`/`fdiv`/`fsqrt`/`clmul*`, so the same
+libraries run unchanged on cores without the erratum; the cost is one `nop` (2 bytes with
+C, 4 without) and about one cycle per such instruction. There is no separate fixed
+multilib.
+
+newlib's `libm/machine/riscv/{e,ef}_sqrt.c` use inline-asm `fsqrt`, which the flag cannot
+reach; `riscv-newlib.patch` adds the `nop` there explicitly.
+
+Application code for the affected core must still be compiled with GCC and
+`-mfix-cloudbear-0001`. Clang has no equivalent option: Clang-linked programs get the
+fixed runtime, but Clang-compiled code carries no workaround.
+
+`build/verify-cloudbear-fix.sh` (run from `verify-multilib.sh`) disassembles every
+installed `.a`/`.o` and fails if any guarded instruction lacks the preceding `nop`.
+
 ## Two-pass constraint
 
 `--enable-multilib` and `--enable-llvm` cannot be combined (Makefile.in:248 hard error).
