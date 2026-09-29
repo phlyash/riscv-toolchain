@@ -190,6 +190,31 @@ if [ "$files" -eq 0 ] || [ "$total_checked" -eq 0 ]; then
     fail=1
 fi
 
+# newlib's RISC-V sqrt/sqrtf carry the nop by hand in inline asm. Make sure
+# FPU multilibs really use that hardware path rather than silently falling
+# back to the generic software square root.
+echo
+echo "hardware sqrt in libm (arch:abi:symbol:insn):"
+for entry in \
+    "rv32imafc:ilp32f:__ieee754_sqrtf:fsqrt.s" \
+    "rv32imafdc:ilp32d:__ieee754_sqrtf:fsqrt.s" \
+    "rv32imafdc:ilp32d:__ieee754_sqrt:fsqrt.d" \
+    "rv32imafdcp:ilp32d:__ieee754_sqrtf:fsqrt.s" \
+    "rv32imafdcp:ilp32d:__ieee754_sqrt:fsqrt.d"
+do
+    IFS=: read -r arch abi sym insn <<<"$entry"
+    for lib in libm.a libm_nano.a; do
+        path="$("$GCC" -march="$arch" -mabi="$abi" -print-file-name="$lib")"
+        if "$OBJDUMP" -d --no-show-raw-insn --disassemble="$sym" "$path" \
+            2>/dev/null | grep -Eq "[[:space:]]${insn//./\\.}[[:space:]]"; then
+            echo "  OK      $arch/$abi $lib $sym uses $insn"
+        else
+            echo "  MISSING $arch/$abi $lib $sym does not use $insn"
+            fail=1
+        fi
+    done
+done
+
 echo "============================================================"
 if [ "$fail" -eq 0 ]; then
     echo "CLOUDBEAR 0001 VERIFICATION PASSED"
