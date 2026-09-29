@@ -25,6 +25,12 @@ ARCH=rv32i_zicsr_zifencei
 ABI=ilp32
 TUPLE=riscv32-unknown-elf
 
+# Every target library (newlib, newlib-nano, libgloss, libgcc, libstdc++)
+# is built with the CloudBEAR 0001 erratum workaround. It only inserts a nop
+# before div/rem/fdiv/fsqrt/clmul, so the libraries stay correct on cores
+# without the erratum.
+TARGET_FIX_FLAGS="-mfix-cloudbear-0001"
+
 # First 6 multilibs are shared GCC/Clang targets.
 # Last 2 are NIIET P-extension GCC-only targets.
 MULTILIB="rv32i-ilp32--;rv32im-ilp32--;rv32imc-ilp32--;rv32imac-ilp32--;rv32imafc-ilp32f--;rv32imafdc-ilp32d--;rv32imcp-ilp32--;rv32imafdcp-ilp32d--"
@@ -79,6 +85,8 @@ gcc_build_into() {
         --with-abi="$ABI" \
         --with-isa-spec=20191213 \
         --with-multilib-generator="$MULTILIB" \
+        --with-target-cflags="$TARGET_FIX_FLAGS" \
+        --with-target-cxxflags="$TARGET_FIX_FLAGS" \
         --with-languages=c,c++ \
         --without-system-zlib \
         --enable-strip \
